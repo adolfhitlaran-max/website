@@ -227,7 +227,7 @@ function renderTool(tool) {
   setStatus(
     backendPowered
       ? backendStatusMessage(tool)
-      : "Provider not wired yet. This tool returns a clean mock response.",
+      : "Provider not wired yet. This tool returns a prototype placeholder.",
     backendPowered ? "ok" : ""
   );
   setUpload(tool);
@@ -410,12 +410,12 @@ async function runImageGenerator(prompt, meta) {
     throw new Error(data?.details || data?.error || `ai-image returned ${response.status}.`);
   }
 
-  const imageUrl = String(data?.image_url || data?.imageUrl || "").trim();
-  if (!imageUrl) throw new Error("ai-image returned no image_url.");
+  const image_url = String(data?.image_url || "").trim();
+  if (!image_url) throw new Error("ai-image returned no image_url.");
 
   return {
     ...data,
-    image_url: imageUrl
+    image_url
   };
 }
 
@@ -538,10 +538,14 @@ async function callAiChat(payload) {
 }
 
 function runMockTool(tool, prompt, meta) {
+  if (tool.imageTool || tool.id === "image") {
+    return Promise.reject(new Error("Image Generator must use ai-image. Mock image generation is disabled."));
+  }
+
   return new Promise((resolve) => {
     window.setTimeout(() => {
       resolve([
-        `${tool.title} mock response`,
+        `${tool.title} prototype placeholder`,
         "",
         `Prompt: ${prompt || "No prompt supplied."}`,
         `Details: ${meta || "No extra details."}`,
@@ -556,7 +560,6 @@ function runMockTool(tool, prompt, meta) {
 function mockSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
-    image: `Image brief drafted for: ${clean}. Next provider should return preview URLs and seed info.`,
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
     ocr: "OCR placeholder ready. Real provider should return extracted text plus confidence notes.",
     background: "Background removal placeholder ready. Real provider should return a transparent PNG URL.",

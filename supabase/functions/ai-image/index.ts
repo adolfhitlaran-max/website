@@ -1,4 +1,5 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
+import { InferenceClient } from "@huggingface/inference";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +13,7 @@ const jsonHeaders = {
 };
 
 const DEFAULT_MODEL = "stabilityai/stable-diffusion-xl-base-1.0";
+const DEFAULT_PROVIDER = "hf-inference";
 const HF_TIMEOUT_MS = 45000;
 
 type ImageRequestBody = {
@@ -67,25 +69,6 @@ function buildImagePrompt(prompt: string, style: string) {
   ].filter(Boolean).join(". ");
 }
 
-function modelUrl(model: string) {
-  const path = model.split("/").map(encodeURIComponent).join("/");
-  return `https://api-inference.huggingface.co/models/${path}`;
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   const chunkSize = 0x8000;
@@ -105,53 +88,37 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
   }
 
   const model = Deno.env.get("HUGGINGFACE_IMAGE_MODEL")?.trim() || DEFAULT_MODEL;
+  const provider = Deno.env.get("HUGGINGFACE_IMAGE_PROVIDER")?.trim() || DEFAULT_PROVIDER;
   const dimensions = aspectDimensions(aspectRatio);
   const fullPrompt = buildImagePrompt(prompt, style);
+  const client = new InferenceClient(apiKey);
 
-  const response = await fetchWithTimeout(
-    modelUrl(model),
-    {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Accept": "image/png",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        inputs: fullPrompt,
-        parameters: {
-          width: dimensions.width,
-          height: dimensions.height
-        },
-        options: {
-          wait_for_model: true
-        }
-      })
-    },
-    HF_TIMEOUT_MS
+  const image = await withTimeout(
+    client.textToImage({
+      provider,
+      model,
+      inputs: fullPrompt,
+      parameters: {
+        width: dimensions.width,
+        height: dimensions.height
+      }
+    }),
+    HF_TIMEOUT_MS,
+    "Hugging Face image request timed out."
   );
 
-  const contentType = response.headers.get("content-type") || "";
-  const responseBuffer = await response.arrayBuffer();
-
-  if (!response.ok) {
-    const details = decodeResponseText(responseBuffer) || `Hugging Face returned ${response.status} ${response.statusText}`;
-    console.error("Hugging Face image request failed:", details);
-    throw new Error(details);
+  if (!image || typeof (image as Blob).arrayBuffer !== "function") {
+    throw new Error("Hugging Face returned an invalid image response.");
   }
 
-  if (!contentType.startsWith("image/")) {
-    const details = decodeResponseText(responseBuffer) || `Unexpected Hugging Face content type: ${contentType}`;
-    console.error("Hugging Face image response was not an image:", details);
-    throw new Error(details);
-  }
-
-  const mimeType = contentType.split(";")[0] || "image/png";
-  const base64 = arrayBufferToBase64(responseBuffer);
+  const blob = image as Blob;
+  const mimeType = blob.type || "image/png";
+  const base64 = arrayBufferToBase64(await blob.arrayBuffer());
 
   return {
     ok: true,
     provider: "huggingface",
+    hf_provider: provider,
     model,
     prompt,
     style,
@@ -163,11 +130,16 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
   };
 }
 
-function decodeResponseText(buffer: ArrayBuffer) {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
   try {
-    return new TextDecoder().decode(buffer).trim();
-  } catch (_error) {
-    return "";
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

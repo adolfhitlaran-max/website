@@ -1,5 +1,6 @@
 {
   "imports": {
+    "@huggingface/inference": "npm:@huggingface/inference@4.13.15",
     "@supabase/functions-js": "jsr:@supabase/functions-js@^2"
   }
 }
