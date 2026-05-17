@@ -392,7 +392,8 @@
     .prompt-output-actions,
     .lore-output-actions,
     .code-output-actions,
-    .ocr-output-actions {
+    .ocr-output-actions,
+    .background-output-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 0.65rem;
@@ -401,7 +402,8 @@
     .prompt-output-actions,
     .lore-output-actions,
     .code-output-actions,
-    .ocr-output-actions {
+    .ocr-output-actions,
+    .background-output-actions {
       display: none;
       margin-top: 0.85rem;
     }
@@ -409,7 +411,8 @@
     .prompt-output-actions.active,
     .lore-output-actions.active,
     .code-output-actions.active,
-    .ocr-output-actions.active {
+    .ocr-output-actions.active,
+    .background-output-actions.active {
       display: flex;
     }
 
@@ -417,7 +420,8 @@
     .prompt-output-actions button,
     .lore-output-actions button,
     .code-output-actions button,
-    .ocr-output-actions button {
+    .ocr-output-actions button,
+    .background-output-actions button {
       min-height: 2.7rem;
       border: 1px solid rgba(245, 239, 226, 0.16);
       border-radius: 999px;
@@ -432,7 +436,8 @@
     .prompt-output-actions button:disabled,
     .lore-output-actions button:disabled,
     .code-output-actions button:disabled,
-    .ocr-output-actions button:disabled {
+    .ocr-output-actions button:disabled,
+    .background-output-actions button:disabled {
       cursor: not-allowed;
       opacity: 0.48;
     }
@@ -453,7 +458,8 @@
     .prompt-result,
     .lore-result,
     .code-result,
-    .ocr-result {
+    .ocr-result,
+    .background-result {
       display: grid;
       gap: 0.7rem;
     }
@@ -479,6 +485,17 @@
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
       font-size: 0.9rem;
       line-height: 1.55;
+    }
+
+    .transparent-preview {
+      background-color: rgba(245, 239, 226, 0.08);
+      background-image:
+        linear-gradient(45deg, rgba(245, 239, 226, 0.12) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(245, 239, 226, 0.12) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(245, 239, 226, 0.12) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(245, 239, 226, 0.12) 75%);
+      background-position: 0 0, 0 0.7rem, 0.7rem -0.7rem, -0.7rem 0;
+      background-size: 1.4rem 1.4rem;
     }
 
     .upload-row {
@@ -759,6 +776,7 @@
       .lore-output-actions,
       .code-output-actions,
       .ocr-output-actions,
+      .background-output-actions,
       .actions {
         align-items: stretch;
         flex-direction: column;
@@ -771,6 +789,7 @@
       .lore-output-actions button,
       .code-output-actions button,
       .ocr-output-actions button,
+      .background-output-actions button,
       .download-button,
       .file-label {
         width: 100%;
@@ -801,7 +820,7 @@
     <section class="lab-hero">
       <p class="eyebrow">Tool Bench</p>
       <h1>AI Lab</h1>
-      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR runs locally in the browser with Tesseract.js. Video, voice, music, background removal, and upscaling stay staged until their own providers are plugged in.</p>
+      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR and background removal run locally in the browser. Video, voice, music, and upscaling stay staged until their own providers are plugged in.</p>
     </section>
 
     <section class="lab-shell" aria-label="AI tools">
@@ -997,6 +1016,11 @@
             <button id="sendOcrToCodeButton" type="button" disabled>Send to Code Helper</button>
           </div>
 
+          <div id="backgroundOutputActions" class="background-output-actions">
+            <button id="downloadBackgroundPngButton" type="button" disabled>Download PNG</button>
+            <button id="sendBackgroundToImageButton" type="button" disabled>Send to Image Generator</button>
+          </div>
+
           <section id="imageGallery" class="image-gallery" aria-label="Recent image generations">
             <div class="image-gallery-head">
               <h3>Recent Images</h3>
@@ -1012,6 +1036,6 @@
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="scripts/ai-lab.js?v=ocr-live-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=background-remover-live-20260517"></script>
 </body>
 </html>

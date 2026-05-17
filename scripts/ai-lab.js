@@ -51,10 +51,11 @@ const tools = [
     id: "background",
     title: "Background Remover",
     icon: "BG",
-    description: "Queue a background removal job with a source image and output notes.",
-    prompt: "Describe what should stay in the image...",
-    meta: "Output background or edge style",
+    description: "Remove an image background locally in your browser and export a transparent PNG.",
+    prompt: "Optional notes for the cutout...",
+    meta: "Optional subject notes",
     action: "Remove Background",
+    browserTool: "background-removal",
     upload: { accept: "image/*", multiple: false }
   },
   {
@@ -171,10 +172,15 @@ const state = {
   lastLoreOutput: "",
   lastCodeOutput: "",
   lastOcrText: "",
+  lastBackgroundBlob: null,
+  lastBackgroundUrl: "",
+  lastBackgroundOriginalName: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
 };
+
+let backgroundRemovalModulePromise = null;
 
 const els = {
   tabs: document.getElementById("toolTabs"),
@@ -222,6 +228,9 @@ const els = {
   downloadOcrText: document.getElementById("downloadOcrTextButton"),
   sendOcrToChat: document.getElementById("sendOcrToChatButton"),
   sendOcrToCode: document.getElementById("sendOcrToCodeButton"),
+  backgroundOutputActions: document.getElementById("backgroundOutputActions"),
+  downloadBackgroundPng: document.getElementById("downloadBackgroundPngButton"),
+  sendBackgroundToImage: document.getElementById("sendBackgroundToImageButton"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
@@ -288,6 +297,7 @@ function renderTool(tool) {
   setLoreControls(tool);
   setCodeControls(tool);
   setOcrControls(tool);
+  setBackgroundControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -324,9 +334,14 @@ function isOcrTool(tool) {
   return tool.id === "ocr";
 }
 
+function isBackgroundRemover(tool) {
+  return tool.id === "background";
+}
+
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
   if (tool.browserTool === "tesseract") return "OCR is powered by Tesseract.js locally in your browser. No image upload or API key needed.";
+  if (tool.browserTool === "background-removal") return "Browser background removal runs locally and exports a transparent PNG. No Supabase upload or API key needed.";
   if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
   if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
   if (tool.id === "code") return "Code Helper is connected to ai-chat / Ollama.";
@@ -345,6 +360,10 @@ function outputIntro(tool) {
 
   if (isOcrTool(tool)) {
     return "Upload an image and OCR text will show up here.";
+  }
+
+  if (isBackgroundRemover(tool)) {
+    return "Upload an image and the transparent PNG preview will show up here.";
   }
 
   if (tool.aiTool) {
@@ -434,6 +453,18 @@ function setOcrOutputActions(isLoading = false) {
   els.sendOcrToCode.disabled = disabled;
 }
 
+function setBackgroundControls(tool) {
+  const active = isBackgroundRemover(tool);
+  els.backgroundOutputActions.classList.toggle("active", active);
+  setBackgroundOutputActions();
+}
+
+function setBackgroundOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastBackgroundBlob;
+  els.downloadBackgroundPng.disabled = disabled;
+  els.sendBackgroundToImage.disabled = disabled;
+}
+
 function setStatus(message, type = "") {
   els.status.className = `status-line ${type}`.trim();
   els.status.textContent = message;
@@ -447,6 +478,7 @@ function setLoading(isLoading) {
   if (activeTool().id === "lore") setLoreOutputActions(isLoading);
   if (activeTool().id === "code") setCodeOutputActions(isLoading);
   if (activeTool().id === "ocr") setOcrOutputActions(isLoading);
+  if (activeTool().id === "background") setBackgroundOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -478,6 +510,11 @@ async function handleSubmit(event) {
     return;
   }
 
+  if (tool.id === "background" && !selectedFiles().length) {
+    setStatus("Upload an image first. Background removal needs an actual image.", "error");
+    return;
+  }
+
   if (!prompt && !selectedFiles().length) {
     setStatus("Give the tool a prompt or a file. Ideally both, because we are not mind readers.", "error");
     return;
@@ -506,6 +543,13 @@ async function handleSubmit(event) {
       const text = await runOcr();
       renderOcrResult(text);
       setStatus(text ? "OCR finished locally with Tesseract.js." : "OCR finished. No readable text found.", text ? "ok" : "");
+      return;
+    }
+
+    if (tool.id === "background") {
+      const result = await runBackgroundRemoval();
+      renderBackgroundRemovalResult(result);
+      setStatus("Background removed locally. Transparent PNG ready.", "ok");
       return;
     }
 
@@ -952,6 +996,10 @@ async function runOcr() {
 }
 
 function isSupportedOcrImage(file) {
+  return isSupportedBrowserImage(file);
+}
+
+function isSupportedBrowserImage(file) {
   if (file.type && file.type.startsWith("image/")) return true;
   return /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file.name || "");
 }
@@ -1030,6 +1078,135 @@ function sendOcrToCodeHelper() {
   els.prompt.value = text;
   els.codeMode.value = "Explain";
   setStatus("OCR text sent to Code Helper.", "ok");
+}
+
+async function runBackgroundRemoval() {
+  const file = selectedFiles()[0];
+  if (!file) {
+    throw new Error("Upload an image before removing the background.");
+  }
+
+  if (!isSupportedBrowserImage(file)) {
+    throw new Error("Background Remover only accepts image files.");
+  }
+
+  clearBackgroundResultUrl();
+  state.lastBackgroundBlob = null;
+  state.lastBackgroundOriginalName = file.name || "image";
+  setBackgroundOutputActions(true);
+  renderLoadingState("Loading browser background remover...");
+  setStatus("Browser background removal: loading model assets...");
+
+  const { removeBackground } = await loadBackgroundRemovalModule();
+  if (typeof removeBackground !== "function") {
+    throw new Error("Background removal library did not expose removeBackground().");
+  }
+
+  const outputBlob = await removeBackground(file, {
+    model: "small",
+    output: {
+      format: "image/png",
+      quality: 0.9
+    },
+    progress: (key, current, total) => {
+      setStatus(backgroundRemovalProgressMessage(key, current, total));
+    }
+  });
+
+  if (!(outputBlob instanceof Blob)) {
+    throw new Error("Background removal did not return an image blob.");
+  }
+
+  state.lastBackgroundBlob = outputBlob;
+  state.lastBackgroundUrl = URL.createObjectURL(outputBlob);
+  setBackgroundOutputActions();
+
+  return {
+    blob: outputBlob,
+    url: state.lastBackgroundUrl,
+    name: state.lastBackgroundOriginalName
+  };
+}
+
+async function loadBackgroundRemovalModule() {
+  backgroundRemovalModulePromise ||= import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/index.mjs");
+  return backgroundRemovalModulePromise;
+}
+
+function backgroundRemovalProgressMessage(key, current, total) {
+  const label = String(key || "processing").replace(/^compute:/, "");
+  if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+    return `Browser background removal: ${label} ${Math.round((current / total) * 100)}%`;
+  }
+
+  return `Browser background removal: ${label}`;
+}
+
+function renderBackgroundRemovalResult(result) {
+  const wrap = document.createElement("div");
+  wrap.className = "image-result background-result";
+
+  const image = document.createElement("img");
+  image.className = "transparent-preview";
+  image.src = result.url;
+  image.alt = "Background removed transparent PNG";
+  image.loading = "lazy";
+
+  const meta = document.createElement("p");
+  meta.className = "image-result-meta";
+  meta.textContent = `${result.name || "Image"} background removed locally. Output: transparent PNG.`;
+
+  wrap.append(image, meta);
+  els.output.replaceChildren(wrap);
+}
+
+function downloadBackgroundPng() {
+  if (!state.lastBackgroundBlob || !state.lastBackgroundUrl) {
+    setStatus("Remove a background first, then download the PNG.", "error");
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = state.lastBackgroundUrl;
+  link.download = backgroundOutputFilename(state.lastBackgroundOriginalName);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setStatus("Transparent PNG downloaded.", "ok");
+}
+
+function sendBackgroundToImageGenerator() {
+  if (!state.lastBackgroundBlob) {
+    setStatus("Remove a background first, then send it somewhere.", "error");
+    return;
+  }
+
+  const subjectName = state.lastBackgroundOriginalName || "the cutout subject";
+  selectTool("image");
+  els.prompt.value = [
+    `Create a new image concept for the transparent cutout from "${subjectName}".`,
+    "Design a clean background or full scene that fits the subject, with polished lighting and composition.",
+    "Note: the cutout PNG was generated locally in the browser and is not uploaded automatically."
+  ].join(" ");
+  setStatus("Background-removal result sent to Image Generator as a prompt.", "ok");
+}
+
+function backgroundOutputFilename(filename) {
+  const base = String(filename || "image")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-z0-9-_]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "image";
+
+  return `${base}-no-background.png`;
+}
+
+function clearBackgroundResultUrl() {
+  if (state.lastBackgroundUrl) {
+    URL.revokeObjectURL(state.lastBackgroundUrl);
+  }
+
+  state.lastBackgroundUrl = "";
 }
 
 async function runPromptEnhancer(prompt, meta) {
@@ -1509,7 +1686,6 @@ function placeholderSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
-    background: "Background removal placeholder ready. Real provider should return a transparent PNG URL.",
     upscaler: "Upscale placeholder ready. Real provider should return original/enhanced comparison data.",
     voice: "Voice job placeholder ready. Real provider should return an audio URL and transcript.",
     music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
@@ -1551,6 +1727,12 @@ function clearTool() {
     state.lastOcrText = "";
     setOcrOutputActions();
   }
+  if (activeTool().id === "background") {
+    clearBackgroundResultUrl();
+    state.lastBackgroundBlob = null;
+    state.lastBackgroundOriginalName = "";
+    setBackgroundOutputActions();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -1580,6 +1762,8 @@ function boot() {
   els.downloadOcrText.addEventListener("click", downloadOcrText);
   els.sendOcrToChat.addEventListener("click", sendOcrToChatAi);
   els.sendOcrToCode.addEventListener("click", sendOcrToCodeHelper);
+  els.downloadBackgroundPng.addEventListener("click", downloadBackgroundPng);
+  els.sendBackgroundToImage.addEventListener("click", sendBackgroundToImageGenerator);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });
