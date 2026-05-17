@@ -7,6 +7,7 @@
   <title>Leaderboard | Uncensored Media</title>
   <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
   <link rel="stylesheet" href="../css/style.css" />
+  <link rel="stylesheet" href="../styles/access-gate.css" />
   <style>
     :root {
       color-scheme: dark;
@@ -501,7 +502,7 @@
               <option value="all">All Games</option>
               <option value="Neon Catch">Neon Catch</option>
               <option value="ICE Roundup">ICE Roundup</option>
-              <option value="Road to Agartha">Road to Agartha</option>
+              <option value="Road to Agartha" disabled>Road to Agartha (Coming Soon)</option>
               <option value="Conspiracy Pictionary">Conspiracy Pictionary</option>
             </select>
           </label>
@@ -513,6 +514,7 @@
 
   <script type="module" src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"></script>
   <script type="module" src="../js/supabaseClient.js"></script>
+  <script type="module" src="../scripts/access-gate.js"></script>
   <script type="module" src="../js/games.js"></script>
   <script src="../js/authNav.js"></script>
   <script src="../js/ai-widget.js" defer></script>

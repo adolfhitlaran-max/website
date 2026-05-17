@@ -31,10 +31,11 @@ const tools = [
     id: "video",
     title: "Video Generator",
     icon: "VI",
-    description: "Plan short video generations with a prompt, target format, and optional reference upload.",
+    description: "Video generation is staged for a later provider. The UI stays here so the tool has a clean home when it launches.",
     prompt: "Describe the video scene...",
     meta: "Duration, aspect ratio, pacing",
-    action: "Generate Video",
+    action: "Coming Soon",
+    comingSoon: true,
     upload: { accept: "image/*,video/*", multiple: false }
   },
   {
@@ -84,12 +85,11 @@ const tools = [
     id: "music",
     title: "Music Generator",
     icon: "MU",
-    description: "Generate short WAV music clips through ai-music and the configured MusicGen provider.",
+    description: "Music generation is temporarily disabled while the MusicGen backend gets hardened for public use.",
     prompt: "Describe the track...",
     meta: "Optional extra direction",
-    action: "Generate Music",
-    live: true,
-    endpoint: "ai-music"
+    action: "Coming Soon",
+    comingSoon: true
   },
   {
     id: "prompt",
@@ -201,6 +201,7 @@ const state = {
 let backgroundRemovalModulePromise = null;
 
 const els = {
+  card: document.getElementById("toolCard"),
   tabs: document.getElementById("toolTabs"),
   kicker: document.getElementById("toolKicker"),
   title: document.getElementById("toolTitle"),
@@ -303,9 +304,14 @@ function renderTabs() {
   els.tabs.replaceChildren(...tools.map((tool) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = tool.id === state.activeId ? "tool-tab active" : "tool-tab";
+    button.className = [
+      "tool-tab",
+      tool.id === state.activeId ? "active" : "",
+      isComingSoon(tool) ? "coming-soon" : ""
+    ].filter(Boolean).join(" ");
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", tool.id === state.activeId ? "true" : "false");
+    if (isComingSoon(tool)) button.setAttribute("aria-disabled", "true");
     button.dataset.tool = tool.id;
 
     const icon = document.createElement("i");
@@ -313,6 +319,12 @@ function renderTabs() {
     const label = document.createElement("span");
     label.textContent = tool.title;
     button.append(icon, label);
+    if (isComingSoon(tool)) {
+      const badge = document.createElement("b");
+      badge.className = "coming-soon-badge";
+      badge.textContent = "Soon";
+      button.append(badge);
+    }
     button.addEventListener("click", () => selectTool(tool.id));
     return button;
   }));
@@ -327,14 +339,19 @@ function selectTool(id) {
   const tool = activeTool();
   renderTabs();
   renderTool(tool);
+  if (isComingSoon(tool)) showComingSoonNotice();
 }
 
 function renderTool(tool) {
+  const comingSoon = isComingSoon(tool);
   const backendPowered = isBackendTool(tool);
   const imageGenerator = isImageGenerator(tool);
   const musicGenerator = isMusicGenerator(tool);
   const browserTool = isBrowserTool(tool);
-  els.kicker.textContent = musicGenerator
+  els.card.classList.toggle("coming-soon", comingSoon);
+  els.kicker.textContent = comingSoon
+    ? "Coming Soon"
+    : musicGenerator
     ? "Live AI Music"
     : imageGenerator
     ? "Live Image Backend"
@@ -350,10 +367,12 @@ function renderTool(tool) {
   els.button.textContent = tool.action;
   els.output.textContent = outputIntro(tool);
   setStatus(
-    backendPowered || browserTool
+    comingSoon
+      ? "Coming Soon. This tool is visible but disabled for now."
+      : backendPowered || browserTool
       ? backendStatusMessage(tool)
       : "Provider not wired yet. This tool returns a prototype placeholder.",
-    backendPowered || browserTool ? "ok" : ""
+    comingSoon ? "soon" : backendPowered || browserTool ? "ok" : ""
   );
   setUpload(tool);
   setPromptControls(tool);
@@ -373,7 +392,11 @@ function renderTool(tool) {
 }
 
 function isBackendTool(tool) {
-  return Boolean(tool.live || tool.aiTool);
+  return !isComingSoon(tool) && Boolean(tool.live || tool.aiTool);
+}
+
+function isComingSoon(tool) {
+  return Boolean(tool.comingSoon);
 }
 
 function isBrowserTool(tool) {
@@ -431,6 +454,10 @@ function backendStatusMessage(tool) {
 }
 
 function outputIntro(tool) {
+  if (isComingSoon(tool)) {
+    return `${tool.title} is marked Coming Soon and will not call any backend provider yet.`;
+  }
+
   if (tool.id === "chat") {
     return renderChatHistory() || "Ask a question and the ai-chat function will answer here.";
   }
@@ -494,17 +521,23 @@ function setImageControls(tool) {
 
 function setMusicControls(tool) {
   const active = isMusicGenerator(tool);
+  const comingSoon = isComingSoon(tool);
   els.musicControls.classList.toggle("active", active);
+  els.musicControls.classList.toggle("disabled", comingSoon);
+  [els.musicGenre, els.musicDuration, els.musicBpm, els.musicMood].forEach((input) => {
+    input.disabled = comingSoon;
+  });
   els.musicOutputActions.classList.toggle("active", active);
   setMusicOutputActions();
 }
 
 function setMusicOutputActions(isLoading = false) {
-  const disabled = isLoading || !state.lastMusicResult?.audio_url;
-  const promptAvailable = Boolean(state.lastMusicRequest?.prompt || musicRequestFromForm({ allowEmpty: true }).prompt);
+  const comingSoon = isComingSoon(activeTool());
+  const disabled = isLoading || comingSoon || !state.lastMusicResult?.audio_url;
+  const promptAvailable = !comingSoon && Boolean(state.lastMusicRequest?.prompt || musicRequestFromForm({ allowEmpty: true }).prompt);
   els.downloadMusicWav.disabled = disabled;
-  els.copyMusicPrompt.disabled = isLoading || !promptAvailable;
-  els.sendMusicPromptToPrompt.disabled = isLoading || !promptAvailable;
+  els.copyMusicPrompt.disabled = isLoading || comingSoon || !promptAvailable;
+  els.sendMusicPromptToPrompt.disabled = isLoading || comingSoon || !promptAvailable;
 }
 
 function setPromptControls(tool) {
@@ -636,8 +669,9 @@ function setStatus(message, type = "") {
 }
 
 function setLoading(isLoading) {
-  els.button.disabled = isLoading;
-  els.button.textContent = isLoading ? "Working..." : activeTool().action;
+  const tool = activeTool();
+  els.button.disabled = isLoading || isComingSoon(tool);
+  els.button.textContent = isLoading ? "Working..." : tool.action;
   els.output.classList.toggle("loading", isLoading);
   if (activeTool().id === "prompt") setPromptOutputActions(isLoading);
   if (activeTool().id === "lore") setLoreOutputActions(isLoading);
@@ -673,6 +707,11 @@ async function handleSubmit(event) {
   const tool = activeTool();
   const prompt = els.prompt.value.trim();
   const meta = els.meta.value.trim();
+
+  if (isComingSoon(tool)) {
+    showComingSoonNotice();
+    return;
+  }
 
   if (tool.id === "ocr" && !selectedFiles().length) {
     setStatus("Upload an image first. OCR needs pixels, shocking as that may be.", "error");
@@ -792,6 +831,10 @@ async function handleSubmit(event) {
   } finally {
     setLoading(false);
   }
+}
+
+function showComingSoonNotice() {
+  setStatus("Coming Soon.", "soon");
 }
 
 async function runChat(prompt) {

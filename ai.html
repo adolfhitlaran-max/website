@@ -7,6 +7,7 @@
   <title>AI Lab | Uncensored Media</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="styles/access-gate.css" />
   <style>
     :root {
       color-scheme: dark;
@@ -200,7 +201,7 @@
     .tool-tab {
       min-height: 3rem;
       display: grid;
-      grid-template-columns: 2rem minmax(0, 1fr);
+      grid-template-columns: 2rem minmax(0, 1fr) auto;
       align-items: center;
       gap: 0.65rem;
       border: 1px solid transparent;
@@ -244,6 +245,23 @@
       background: linear-gradient(135deg, var(--red), rgba(0, 213, 255, 0.72));
     }
 
+    .tool-tab.coming-soon {
+      opacity: 0.62;
+    }
+
+    .coming-soon-badge {
+      border: 1px solid rgba(255, 184, 61, 0.36);
+      border-radius: 999px;
+      padding: 0.18rem 0.42rem;
+      background: rgba(255, 184, 61, 0.12);
+      color: var(--amber);
+      font-size: 0.62rem;
+      font-style: normal;
+      font-weight: 950;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
     .workspace {
       display: grid;
       gap: 1rem;
@@ -254,6 +272,13 @@
       display: grid;
       gap: 1rem;
       padding: clamp(1rem, 2.5vw, 1.4rem);
+    }
+
+    .tool-card.coming-soon {
+      border-color: rgba(255, 184, 61, 0.28);
+      background:
+        linear-gradient(135deg, rgba(255, 184, 61, 0.08), transparent 26rem),
+        var(--panel);
     }
 
     .tool-head {
@@ -297,6 +322,12 @@
       border-color: rgba(229, 36, 42, 0.46);
       background: rgba(229, 36, 42, 0.1);
       color: #ffd8d8;
+    }
+
+    .status-line.soon {
+      border-color: rgba(255, 184, 61, 0.4);
+      background: rgba(255, 184, 61, 0.09);
+      color: #ffe0a3;
     }
 
     .tool-form {
@@ -400,6 +431,10 @@
     .voice-controls.active,
     .upscaler-controls.active {
       display: grid;
+    }
+
+    .music-controls.disabled {
+      opacity: 0.58;
     }
 
     .image-controls-grid,
@@ -710,6 +745,10 @@
       opacity: 0.72;
     }
 
+    .tool-card.coming-soon .generate-button:disabled {
+      cursor: not-allowed;
+    }
+
     .ghost-button {
       border: 1px solid rgba(245, 239, 226, 0.16);
       background: rgba(245, 239, 226, 0.06);
@@ -969,7 +1008,7 @@
     <section class="lab-hero">
       <p class="eyebrow">Tool Bench</p>
       <h1>AI Lab</h1>
-      <p>Chat, image generation, music generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR, background removal, upscaling, and voice tools run locally in the browser. Video stays staged until its own provider is plugged in.</p>
+      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR, background removal, upscaling, and voice tools run locally in the browser. Music and video are staged until their providers are ready for public use.</p>
     </section>
 
     <section class="lab-shell" aria-label="AI tools">
@@ -1306,6 +1345,7 @@
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="scripts/ai-lab.js?v=musicgen-live-20260517"></script>
+  <script type="module" src="scripts/access-gate.js"></script>
+  <script type="module" src="scripts/ai-lab.js?v=access-gate-20260517"></script>
 </body>
 </html>
