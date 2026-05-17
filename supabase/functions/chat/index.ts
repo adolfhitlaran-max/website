@@ -1,4 +1,5 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
+import { generateAiText, messagesToPrompt, type ChatMessage } from "../_shared/ai-provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,9 +12,7 @@ const jsonHeaders = {
   "Content-Type": "application/json"
 };
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = "openrouter/free";
-const OPENROUTER_TIMEOUT_MS = 12000;
+const AI_PROVIDER_TIMEOUT_MS = 12000;
 const API_MESSAGE_LIMIT = 4;
 const FALLBACK_REPLY = "I had a thought and immediately lost it. Try again, genius.";
 const VALID_PAGES = [
@@ -26,11 +25,6 @@ const VALID_PAGES = [
   { name: "Chat Rooms", path: "/pages/chat.html", keywords: ["chat", "chat rooms", "room", "rooms"] },
   { name: "Audio Archive / Speeches", path: "/pages/archive.html", keywords: ["speeches", "speech", "audio", "archive", "old speeches", "historical speeches"] }
 ];
-
-type ChatMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -50,9 +44,9 @@ function errorDetails(error: unknown) {
   }
 }
 
-function openRouterError(details: string, status = 500) {
+function aiProviderError(details: string, status = 500) {
   return jsonResponse({
-    error: "OpenRouter request failed",
+    error: "AI provider request failed",
     details
   }, status);
 }
@@ -108,50 +102,6 @@ function sanitizeMessages(value: unknown): ChatMessage[] {
     .filter((message) => message.content);
 }
 
-function extractReply(data: unknown): string {
-  if (typeof data !== "object" || data === null) return "";
-
-  const root = data as {
-    choices?: Array<{
-      text?: unknown;
-      message?: {
-        content?: unknown;
-        reasoning?: unknown;
-      };
-    }>;
-  };
-
-  const choice = root.choices?.[0];
-  const content = choice?.message?.content;
-  if (typeof content === "string") return content.trim();
-
-  if (Array.isArray(content)) {
-    const joined = content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (typeof part === "object" && part !== null && "text" in part) {
-          return String((part as { text?: unknown }).text || "");
-        }
-        return "";
-      })
-      .join("")
-      .trim();
-
-    if (joined) return joined;
-  }
-
-  if (typeof choice?.message?.reasoning === "string" && choice.message.reasoning.trim()) {
-    console.error("OpenRouter returned reasoning without content; using safe fallback.");
-    return FALLBACK_REPLY;
-  }
-
-  if (typeof choice?.text === "string" && choice.text.trim()) {
-    return choice.text.trim();
-  }
-
-  return FALLBACK_REPLY;
-}
-
 async function handleRequest(req: Request) {
   if (req.method === "OPTIONS") {
     return jsonResponse({ ok: true });
@@ -199,15 +149,7 @@ async function handleRequest(req: Request) {
     });
   }
 
-  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
-  if (!apiKey) {
-    console.error("Missing OPENROUTER_API_KEY");
-    return jsonResponse({
-      error: "Missing OPENROUTER_API_KEY"
-    }, 500);
-  }
-
-  const openRouterMessages: ChatMessage[] = [
+  const aiMessages: ChatMessage[] = [
     {
       role: "system",
       content: [
@@ -237,70 +179,25 @@ async function handleRequest(req: Request) {
     ...messages
   ];
 
-  let openRouterResponse: Response;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
-
   try {
-    openRouterResponse = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://uncensoredmedia.io",
-        "X-Title": "Uncensored Media Archivist AI"
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: openRouterMessages,
-        max_tokens: 120,
-        temperature: 0.4
-      }),
-      signal: controller.signal
-    });
-  } catch (error) {
-    console.error("OpenRouter fetch threw:", error);
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return openRouterError("OpenRouter request timed out after 12 seconds.");
-    }
-
-    return openRouterError(errorDetails(error));
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  let responseText = "";
-  try {
-    responseText = await openRouterResponse.text();
-  } catch (error) {
-    console.error("OpenRouter response text read failed:", error);
-    return openRouterError(errorDetails(error));
-  }
-
-  if (!openRouterResponse.ok) {
-    console.error("OpenRouter request failed:", {
-      status: openRouterResponse.status,
-      statusText: openRouterResponse.statusText,
-      responseText
+    const aiResult = await generateAiText({
+      messages: aiMessages,
+      prompt: messagesToPrompt(aiMessages),
+      timeoutMs: AI_PROVIDER_TIMEOUT_MS,
+      maxTokens: 120,
+      temperature: 0.4,
+      fallbackReply: FALLBACK_REPLY
     });
 
-    return openRouterError(responseText || `${openRouterResponse.status} ${openRouterResponse.statusText}`);
-  }
-
-  let data: unknown;
-  try {
-    data = responseText ? JSON.parse(responseText) : null;
-  } catch (error) {
-    console.error("OpenRouter JSON parse failed:", {
-      responseText,
-      error
+    return jsonResponse({
+      reply: aiResult.text,
+      provider: aiResult.provider,
+      model: aiResult.model
     });
-
-    return openRouterError(`OpenRouter returned invalid JSON: ${errorDetails(error)}`);
+  } catch (error) {
+    console.error("Archivist AI provider error:", error);
+    return aiProviderError(errorDetails(error));
   }
-
-  const reply = extractReply(data);
-  return jsonResponse({ reply });
 }
 
 Deno.serve(async (req) => {
