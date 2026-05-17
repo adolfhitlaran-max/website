@@ -40,11 +40,12 @@ const tools = [
     id: "ocr",
     title: "OCR",
     icon: "OC",
-    description: "Mock text extraction from images or PDFs. Real OCR can drop into this slot later.",
-    prompt: "What should the OCR focus on?",
+    description: "Extract readable text from images locally in your browser with Tesseract.js.",
+    prompt: "Optional OCR notes...",
     meta: "Language or extraction notes",
     action: "Extract Text",
-    upload: { accept: "image/*,.pdf", multiple: false }
+    browserTool: "tesseract",
+    upload: { accept: "image/*", multiple: false }
   },
   {
     id: "background",
@@ -169,6 +170,7 @@ const state = {
   lastPromptEnhanced: "",
   lastLoreOutput: "",
   lastCodeOutput: "",
+  lastOcrText: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -215,6 +217,11 @@ const els = {
   copyCode: document.getElementById("copyCodeButton"),
   downloadCodeResponse: document.getElementById("downloadCodeResponseButton"),
   sendCodeToPrompt: document.getElementById("sendCodeToPromptButton"),
+  ocrOutputActions: document.getElementById("ocrOutputActions"),
+  copyOcrText: document.getElementById("copyOcrTextButton"),
+  downloadOcrText: document.getElementById("downloadOcrTextButton"),
+  sendOcrToChat: document.getElementById("sendOcrToChatButton"),
+  sendOcrToCode: document.getElementById("sendOcrToCodeButton"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
@@ -256,7 +263,14 @@ function selectTool(id) {
 function renderTool(tool) {
   const backendPowered = isBackendTool(tool);
   const imageGenerator = isImageGenerator(tool);
-  els.kicker.textContent = imageGenerator ? "Live Image Backend" : backendPowered ? "Live Ollama Backend" : "Prototype Tool";
+  const browserTool = isBrowserTool(tool);
+  els.kicker.textContent = imageGenerator
+    ? "Live Image Backend"
+    : browserTool
+      ? "Live Browser Tool"
+      : backendPowered
+        ? "Live Ollama Backend"
+        : "Prototype Tool";
   els.title.textContent = tool.title;
   els.description.textContent = tool.description;
   els.prompt.placeholder = tool.prompt;
@@ -264,15 +278,16 @@ function renderTool(tool) {
   els.button.textContent = tool.action;
   els.output.textContent = outputIntro(tool);
   setStatus(
-    backendPowered
+    backendPowered || browserTool
       ? backendStatusMessage(tool)
       : "Provider not wired yet. This tool returns a prototype placeholder.",
-    backendPowered ? "ok" : ""
+    backendPowered || browserTool ? "ok" : ""
   );
   setUpload(tool);
   setPromptControls(tool);
   setLoreControls(tool);
   setCodeControls(tool);
+  setOcrControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -283,6 +298,10 @@ function renderTool(tool) {
 
 function isBackendTool(tool) {
   return Boolean(tool.live || tool.aiTool);
+}
+
+function isBrowserTool(tool) {
+  return Boolean(tool.browserTool);
 }
 
 function isImageGenerator(tool) {
@@ -301,8 +320,13 @@ function isCodeHelper(tool) {
   return tool.id === "code";
 }
 
+function isOcrTool(tool) {
+  return tool.id === "ocr";
+}
+
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
+  if (tool.browserTool === "tesseract") return "OCR is powered by Tesseract.js locally in your browser. No image upload or API key needed.";
   if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
   if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
   if (tool.id === "code") return "Code Helper is connected to ai-chat / Ollama.";
@@ -317,6 +341,10 @@ function outputIntro(tool) {
 
   if (isImageGenerator(tool)) {
     return `${tool.title} output will show up here.`;
+  }
+
+  if (isOcrTool(tool)) {
+    return "Upload an image and OCR text will show up here.";
   }
 
   if (tool.aiTool) {
@@ -392,6 +420,20 @@ function setCodeOutputActions(isLoading = false) {
   els.sendCodeToPrompt.disabled = disabled;
 }
 
+function setOcrControls(tool) {
+  const active = isOcrTool(tool);
+  els.ocrOutputActions.classList.toggle("active", active);
+  setOcrOutputActions();
+}
+
+function setOcrOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastOcrText;
+  els.copyOcrText.disabled = disabled;
+  els.downloadOcrText.disabled = disabled;
+  els.sendOcrToChat.disabled = disabled;
+  els.sendOcrToCode.disabled = disabled;
+}
+
 function setStatus(message, type = "") {
   els.status.className = `status-line ${type}`.trim();
   els.status.textContent = message;
@@ -404,6 +446,7 @@ function setLoading(isLoading) {
   if (activeTool().id === "prompt") setPromptOutputActions(isLoading);
   if (activeTool().id === "lore") setLoreOutputActions(isLoading);
   if (activeTool().id === "code") setCodeOutputActions(isLoading);
+  if (activeTool().id === "ocr") setOcrOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -430,6 +473,11 @@ async function handleSubmit(event) {
   const prompt = els.prompt.value.trim();
   const meta = els.meta.value.trim();
 
+  if (tool.id === "ocr" && !selectedFiles().length) {
+    setStatus("Upload an image first. OCR needs pixels, shocking as that may be.", "error");
+    return;
+  }
+
   if (!prompt && !selectedFiles().length) {
     setStatus("Give the tool a prompt or a file. Ideally both, because we are not mind readers.", "error");
     return;
@@ -451,6 +499,13 @@ async function handleSubmit(event) {
 
     if (tool.id === "image") {
       await generateImageFromRequest(imageRequestFromForm());
+      return;
+    }
+
+    if (tool.id === "ocr") {
+      const text = await runOcr();
+      renderOcrResult(text);
+      setStatus(text ? "OCR finished locally with Tesseract.js." : "OCR finished. No readable text found.", text ? "ok" : "");
       return;
     }
 
@@ -858,6 +913,123 @@ function renderImageGallery(rows) {
     card.append(image, caption, prompt);
     els.imageGalleryGrid.append(card);
   });
+}
+
+async function runOcr() {
+  const file = selectedFiles()[0];
+  if (!file) {
+    throw new Error("Upload an image before running OCR.");
+  }
+
+  if (!isSupportedOcrImage(file)) {
+    throw new Error("OCR only accepts image files right now.");
+  }
+
+  const tesseract = window.Tesseract;
+  if (!tesseract?.recognize) {
+    throw new Error("Tesseract.js did not load. Check your connection and try again.");
+  }
+
+  state.lastOcrText = "";
+  setOcrOutputActions(true);
+  renderLoadingState("Reading image locally with Tesseract.js...");
+  setStatus("OCR is reading the image locally...");
+
+  const result = await tesseract.recognize(file, "eng", {
+    logger: (message) => {
+      if (!message || typeof message !== "object") return;
+      const status = String(message.status || "reading image");
+      const progress = Number(message.progress || 0);
+      const percent = progress > 0 ? ` ${Math.round(progress * 100)}%` : "";
+      setStatus(`Tesseract.js: ${status}${percent}`);
+    }
+  });
+
+  const text = String(result?.data?.text || "").trim();
+  state.lastOcrText = text;
+  setOcrOutputActions();
+  return text;
+}
+
+function isSupportedOcrImage(file) {
+  if (file.type && file.type.startsWith("image/")) return true;
+  return /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file.name || "");
+}
+
+function renderOcrResult(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "ocr-result";
+
+  const label = document.createElement("p");
+  label.className = "prompt-result-label";
+  label.textContent = "Extracted Text";
+
+  const body = document.createElement("div");
+  body.className = "prompt-result-body";
+  body.textContent = text || "No readable text found.";
+
+  wrap.append(label, body);
+  els.output.replaceChildren(wrap);
+}
+
+async function copyOcrText() {
+  const text = state.lastOcrText.trim();
+  if (!text) {
+    setStatus("Run OCR and find text before copying. Clipboards are not psychic.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("OCR text copied.", "ok");
+  } catch (error) {
+    console.error("OCR text copy failed:", error);
+    setStatus("Copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function downloadOcrText() {
+  const text = state.lastOcrText.trim();
+  if (!text) {
+    setStatus("Run OCR and find text before downloading.", "error");
+    return;
+  }
+
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "uncensored-media-ocr.txt";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus("OCR text downloaded.", "ok");
+}
+
+function sendOcrToChatAi() {
+  const text = state.lastOcrText.trim();
+  if (!text) {
+    setStatus("Run OCR and find text before sending it somewhere.", "error");
+    return;
+  }
+
+  selectTool("chat");
+  els.prompt.value = `Help me with this OCR text:\n\n${text}`;
+  setStatus("OCR text sent to Chat AI.", "ok");
+}
+
+function sendOcrToCodeHelper() {
+  const text = state.lastOcrText.trim();
+  if (!text) {
+    setStatus("Run OCR and find text before sending it somewhere.", "error");
+    return;
+  }
+
+  selectTool("code");
+  els.prompt.value = text;
+  els.codeMode.value = "Explain";
+  setStatus("OCR text sent to Code Helper.", "ok");
 }
 
 async function runPromptEnhancer(prompt, meta) {
@@ -1337,7 +1509,6 @@ function placeholderSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
-    ocr: "OCR placeholder ready. Real provider should return extracted text plus confidence notes.",
     background: "Background removal placeholder ready. Real provider should return a transparent PNG URL.",
     upscaler: "Upscale placeholder ready. Real provider should return original/enhanced comparison data.",
     voice: "Voice job placeholder ready. Real provider should return an audio URL and transcript.",
@@ -1376,6 +1547,10 @@ function clearTool() {
     state.lastCodeOutput = "";
     setCodeOutputActions();
   }
+  if (activeTool().id === "ocr") {
+    state.lastOcrText = "";
+    setOcrOutputActions();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -1401,6 +1576,10 @@ function boot() {
   els.copyCode.addEventListener("click", copyCode);
   els.downloadCodeResponse.addEventListener("click", downloadCodeResponse);
   els.sendCodeToPrompt.addEventListener("click", sendCodeToPromptEnhancer);
+  els.copyOcrText.addEventListener("click", copyOcrText);
+  els.downloadOcrText.addEventListener("click", downloadOcrText);
+  els.sendOcrToChat.addEventListener("click", sendOcrToChatAi);
+  els.sendOcrToCode.addEventListener("click", sendOcrToCodeHelper);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });
