@@ -198,9 +198,7 @@ const els = {
   output: document.getElementById("toolOutput"),
   imageGallery: document.getElementById("imageGallery"),
   imageGalleryStatus: document.getElementById("imageGalleryStatus"),
-  imageGalleryGrid: document.getElementById("imageGalleryGrid"),
-  activeToolStat: document.getElementById("activeToolStat"),
-  backendStat: document.getElementById("backendStat")
+  imageGalleryGrid: document.getElementById("imageGalleryGrid")
 };
 
 function activeTool() {
@@ -242,8 +240,6 @@ function renderTool(tool) {
   els.prompt.placeholder = tool.prompt;
   els.meta.placeholder = tool.meta;
   els.button.textContent = tool.action;
-  els.activeToolStat.textContent = tool.title;
-  els.backendStat.textContent = backendLabel(tool);
   els.output.textContent = outputIntro(tool);
   setStatus(
     backendPowered
@@ -266,13 +262,6 @@ function isBackendTool(tool) {
 
 function isImageGenerator(tool) {
   return tool.id === "image";
-}
-
-function backendLabel(tool) {
-  if (tool.endpoint === "ai-image") return "ai-image / Hugging Face";
-  if (tool.endpoint === "ai-chat") return "ai-chat";
-  if (tool.aiTool) return "ai-chat / Ollama";
-  return "prototype";
 }
 
 function backendStatusMessage(tool) {
