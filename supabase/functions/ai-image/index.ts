@@ -24,6 +24,7 @@ type ImageRequestBody = {
   prompt?: unknown;
   style?: unknown;
   aspectRatio?: unknown;
+  negativePrompt?: unknown;
 };
 
 type ModelFailure = {
@@ -33,6 +34,22 @@ type ModelFailure = {
 
 type ImageGenerationError = Error & {
   failures?: ModelFailure[];
+};
+
+const STYLE_MODIFIERS: Record<string, string> = {
+  default: "high detail, polished composition, strong lighting",
+  "pixel art": "pixel art, retro game sprite style, crisp pixels, 16-bit aesthetic",
+  "lego style": "LEGO-inspired toy figure, plastic brick texture, minifigure proportions, playful toy photography style",
+  "dark fantasy": "dark fantasy concept art, dramatic lighting, ancient ruins, ominous atmosphere",
+  anime: "anime illustration, expressive character design, clean linework, vibrant color",
+  realistic: "realistic photography, natural lighting, believable textures, sharp detail",
+  cinematic: "cinematic still, dramatic composition, film lighting, rich contrast",
+  "retro 80s": "retro 1980s poster art, neon lighting, synthwave color palette, airbrushed texture",
+  "medieval manuscript": "medieval illuminated manuscript, ornate borders, aged parchment, hand-painted miniature style",
+  "conspiracy poster": "vintage conspiracy poster, dramatic collage, newspaper clippings, red string board aesthetic",
+  "game map": "top-down game map, readable layout, environmental landmarks, fantasy cartography",
+  "concept art": "professional concept art, production design, clear silhouettes, mood painting",
+  "logo/icon": "clean logo icon, simple memorable silhouette, scalable vector-like design, centered composition"
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -74,11 +91,18 @@ function aspectDimensions(aspectRatio: string) {
   return presets[normalized] || presets["1:1"];
 }
 
-function buildImagePrompt(prompt: string, style: string) {
+function styleModifier(style: string) {
+  const key = String(style || "default").trim().toLowerCase();
+  return STYLE_MODIFIERS[key] || style || STYLE_MODIFIERS.default;
+}
+
+function buildImagePrompt(prompt: string, style: string, aspectRatio: string, negativePrompt: string) {
   return [
     prompt,
-    style && `Style: ${style}`,
-    "high detail, polished composition, strong lighting"
+    `Style: ${style || "Default"}`,
+    styleModifier(style),
+    `Requested aspect ratio: ${aspectRatio}`,
+    negativePrompt && `Avoid: ${negativePrompt}`
   ].filter(Boolean).join(". ");
 }
 
@@ -100,7 +124,7 @@ function imageModelsFromEnvironment() {
   return [...new Set(models)];
 }
 
-async function generateWithHuggingFace(prompt: string, style: string, aspectRatio: string) {
+async function generateWithHuggingFace(prompt: string, style: string, aspectRatio: string, negativePrompt: string) {
   const apiKey = Deno.env.get("HUGGINGFACE_API_KEY")?.trim();
   if (!apiKey) {
     throw new Error("Missing HUGGINGFACE_API_KEY");
@@ -108,25 +132,13 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
 
   const provider = Deno.env.get("HUGGINGFACE_IMAGE_PROVIDER")?.trim() || DEFAULT_PROVIDER;
   const dimensions = aspectDimensions(aspectRatio);
-  const fullPrompt = buildImagePrompt(prompt, style);
+  const fullPrompt = buildImagePrompt(prompt, style, aspectRatio, negativePrompt);
   const client = new InferenceClient(apiKey);
   const failures: ModelFailure[] = [];
 
   for (const model of imageModelsFromEnvironment()) {
     try {
-      const image = await withTimeout(
-        client.textToImage({
-          provider,
-          model,
-          inputs: fullPrompt,
-          parameters: {
-            width: dimensions.width,
-            height: dimensions.height
-          }
-        }),
-        HF_TIMEOUT_MS,
-        `Hugging Face image request timed out for ${model}.`
-      );
+      const image = await generateModelImage(client, provider, model, fullPrompt, dimensions);
 
       if (!image || typeof (image as Blob).arrayBuffer !== "function") {
         throw new Error("Hugging Face returned an invalid image response.");
@@ -143,6 +155,7 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
         model,
         prompt,
         style,
+        negativePrompt,
         aspectRatio,
         width: dimensions.width,
         height: dimensions.height,
@@ -160,6 +173,41 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
   const error = new Error(`All Hugging Face image models failed. ${detailLines.join(" | ")}`);
   (error as ImageGenerationError).failures = failures;
   throw error;
+}
+
+async function generateModelImage(
+  client: InferenceClient,
+  provider: string,
+  model: string,
+  prompt: string,
+  dimensions: { width: number; height: number }
+) {
+  try {
+    return await withTimeout(
+      client.textToImage({
+        provider,
+        model,
+        inputs: prompt,
+        parameters: {
+          width: dimensions.width,
+          height: dimensions.height
+        }
+      }),
+      HF_TIMEOUT_MS,
+      `Hugging Face image request timed out for ${model}.`
+    );
+  } catch (error) {
+    console.error(`Hugging Face image dimensions failed for ${model}; retrying without explicit size.`, error);
+    return await withTimeout(
+      client.textToImage({
+        provider,
+        model,
+        inputs: prompt
+      }),
+      HF_TIMEOUT_MS,
+      `Hugging Face image request without dimensions timed out for ${model}.`
+    );
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
@@ -201,8 +249,9 @@ async function handleRequest(req: Request) {
   }
 
   const prompt = cleanText(body.prompt);
-  const style = cleanText(body.style, "dark modern cinematic");
+  const style = cleanText(body.style, "Default");
   const aspectRatio = cleanText(body.aspectRatio, "1:1");
+  const negativePrompt = cleanText(body.negativePrompt);
 
   if (!prompt) {
     return jsonResponse({
@@ -213,7 +262,7 @@ async function handleRequest(req: Request) {
   }
 
   try {
-    const result = await generateWithHuggingFace(prompt, style, aspectRatio);
+    const result = await generateWithHuggingFace(prompt, style, aspectRatio, negativePrompt);
     return jsonResponse(result);
   } catch (error) {
     console.error("AI image function provider error:", error);

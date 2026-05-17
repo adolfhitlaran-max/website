@@ -319,6 +319,7 @@
       font-weight: 850;
     }
 
+    select,
     input[type="text"],
     textarea {
       width: 100%;
@@ -329,9 +330,19 @@
       outline: none;
     }
 
+    select,
     input[type="text"] {
       min-height: 3rem;
       padding: 0.78rem 0.85rem;
+    }
+
+    select {
+      appearance: none;
+      background:
+        linear-gradient(45deg, transparent 50%, rgba(245, 239, 226, 0.82) 50%) calc(100% - 1.1rem) 1.28rem / 0.45rem 0.45rem no-repeat,
+        linear-gradient(135deg, rgba(245, 239, 226, 0.82) 50%, transparent 50%) calc(100% - 0.82rem) 1.28rem / 0.45rem 0.45rem no-repeat,
+        rgba(5, 6, 7, 0.74);
+      padding-right: 2.2rem;
     }
 
     textarea {
@@ -340,9 +351,68 @@
       padding: 0.85rem;
     }
 
+    select:focus,
     input[type="text"]:focus,
     textarea:focus {
       border-color: rgba(0, 213, 255, 0.55);
+    }
+
+    .image-controls {
+      display: none;
+      gap: 0.85rem;
+      border: 1px solid rgba(245, 239, 226, 0.14);
+      border-radius: var(--radius);
+      padding: 0.9rem;
+      background: rgba(245, 239, 226, 0.045);
+    }
+
+    .image-controls.active {
+      display: grid;
+    }
+
+    .image-controls-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
+      gap: 0.75rem;
+    }
+
+    .image-controls textarea {
+      min-height: 6rem;
+    }
+
+    .image-tool-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+    }
+
+    .image-tool-actions button {
+      min-height: 2.7rem;
+      border: 1px solid rgba(245, 239, 226, 0.16);
+      border-radius: 999px;
+      padding: 0.62rem 0.85rem;
+      background: rgba(245, 239, 226, 0.07);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 900;
+    }
+
+    .image-tool-actions button:disabled {
+      cursor: not-allowed;
+      opacity: 0.48;
+    }
+
+    .enhanced-prompt-preview {
+      display: none;
+      border-left: 3px solid var(--cyan);
+      padding: 0.72rem 0.85rem;
+      background: rgba(0, 213, 255, 0.07);
+      color: rgba(245, 239, 226, 0.84);
+      white-space: pre-wrap;
+    }
+
+    .enhanced-prompt-preview.active {
+      display: block;
     }
 
     .upload-row {
@@ -499,6 +569,76 @@
       font-weight: 950;
     }
 
+    .image-gallery {
+      display: none;
+      gap: 0.85rem;
+      border-top: 1px solid rgba(245, 239, 226, 0.12);
+      padding-top: 1rem;
+    }
+
+    .image-gallery.active {
+      display: grid;
+    }
+
+    .image-gallery-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .image-gallery-head h3 {
+      margin: 0;
+      font-size: 1rem;
+      text-transform: uppercase;
+    }
+
+    .image-gallery-status {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .image-gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+      gap: 0.75rem;
+    }
+
+    .image-gallery-card {
+      display: grid;
+      gap: 0.5rem;
+      border: 1px solid rgba(245, 239, 226, 0.14);
+      border-radius: var(--radius);
+      padding: 0.55rem;
+      background: rgba(5, 6, 7, 0.58);
+      min-width: 0;
+    }
+
+    .image-gallery-card img {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: calc(var(--radius) - 2px);
+      object-fit: cover;
+      background: rgba(0, 0, 0, 0.32);
+    }
+
+    .image-gallery-card p {
+      margin: 0;
+      color: rgba(245, 239, 226, 0.78);
+      font-size: 0.78rem;
+      overflow-wrap: anywhere;
+    }
+
+    .error-box {
+      border: 1px solid rgba(229, 36, 42, 0.48);
+      border-radius: var(--radius);
+      padding: 0.85rem;
+      background: rgba(229, 36, 42, 0.11);
+      color: #ffd8d8;
+      white-space: pre-wrap;
+    }
+
     .quick-panel {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -553,6 +693,7 @@
       }
 
       .field-grid,
+      .image-controls-grid,
       .quick-panel {
         grid-template-columns: 1fr;
       }
@@ -573,6 +714,7 @@
       }
 
       .upload-row,
+      .image-tool-actions,
       .actions {
         align-items: stretch;
         flex-direction: column;
@@ -580,6 +722,8 @@
 
       .generate-button,
       .ghost-button,
+      .image-tool-actions button,
+      .download-button,
       .file-label {
         width: 100%;
       }
@@ -643,6 +787,48 @@
               </label>
             </div>
 
+            <div id="imageControls" class="image-controls">
+              <div class="image-controls-grid">
+                <label>
+                  Style
+                  <select id="imageStyle" name="imageStyle">
+                    <option value="Default">Default</option>
+                    <option value="Pixel Art">Pixel Art</option>
+                    <option value="LEGO Style">LEGO Style</option>
+                    <option value="Dark Fantasy">Dark Fantasy</option>
+                    <option value="Anime">Anime</option>
+                    <option value="Realistic">Realistic</option>
+                    <option value="Cinematic">Cinematic</option>
+                    <option value="Retro 80s">Retro 80s</option>
+                    <option value="Medieval Manuscript">Medieval Manuscript</option>
+                    <option value="Conspiracy Poster">Conspiracy Poster</option>
+                    <option value="Game Map">Game Map</option>
+                    <option value="Concept Art">Concept Art</option>
+                    <option value="Logo/Icon">Logo/Icon</option>
+                  </select>
+                </label>
+                <label>
+                  Aspect Ratio
+                  <select id="imageAspectRatio" name="imageAspectRatio">
+                    <option value="1:1">1:1</option>
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Negative Prompt
+                <textarea id="imageNegativePrompt" name="imageNegativePrompt" placeholder="What should the image avoid?"></textarea>
+              </label>
+              <div class="image-tool-actions">
+                <button id="enhanceImagePromptButton" type="button">Enhance Prompt</button>
+                <button id="useEnhancedPromptButton" type="button" disabled>Use Enhanced Prompt</button>
+                <button id="generateSimilarButton" type="button" disabled>Generate Similar</button>
+                <button id="copyImagePromptButton" type="button">Copy Prompt</button>
+              </div>
+              <div id="enhancedPromptPreview" class="enhanced-prompt-preview"></div>
+            </div>
+
             <div id="uploadRow" class="upload-row">
               <label class="file-label">
                 Upload File
@@ -658,6 +844,14 @@
           </form>
 
           <div id="toolOutput" class="output-area" aria-live="polite">Output will show up here.</div>
+
+          <section id="imageGallery" class="image-gallery" aria-label="Recent image generations">
+            <div class="image-gallery-head">
+              <h3>Recent Images</h3>
+              <p id="imageGalleryStatus" class="image-gallery-status">Loading gallery...</p>
+            </div>
+            <div id="imageGalleryGrid" class="image-gallery-grid"></div>
+          </section>
         </article>
 
         <section class="quick-panel" aria-label="AI Lab status">
@@ -680,6 +874,6 @@
 
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
-  <script type="module" src="scripts/ai-lab.js?v=ai-image-live-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=ai-image-upgrades-20260517"></script>
 </body>
 </html>

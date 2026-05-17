@@ -1,3 +1,5 @@
+import { getCurrentUserAndProfile, supabase } from "../js/supabaseClient.js";
+
 const AI_CHAT_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-chat";
 const AI_IMAGE_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-image";
 
@@ -163,7 +165,11 @@ const aiToolPrompts = {
 
 const state = {
   activeId: tools[0].id,
-  chatMessages: []
+  chatMessages: [],
+  lastEnhancedPrompt: "",
+  lastImageRequest: null,
+  lastImageResult: null,
+  galleryLoaded: false
 };
 
 const els = {
@@ -178,9 +184,21 @@ const els = {
   uploadRow: document.getElementById("uploadRow"),
   file: document.getElementById("toolFile"),
   fileList: document.getElementById("fileList"),
+  imageControls: document.getElementById("imageControls"),
+  imageStyle: document.getElementById("imageStyle"),
+  imageAspectRatio: document.getElementById("imageAspectRatio"),
+  imageNegativePrompt: document.getElementById("imageNegativePrompt"),
+  enhanceImagePrompt: document.getElementById("enhanceImagePromptButton"),
+  useEnhancedPrompt: document.getElementById("useEnhancedPromptButton"),
+  generateSimilar: document.getElementById("generateSimilarButton"),
+  copyImagePrompt: document.getElementById("copyImagePromptButton"),
+  enhancedPromptPreview: document.getElementById("enhancedPromptPreview"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
+  imageGallery: document.getElementById("imageGallery"),
+  imageGalleryStatus: document.getElementById("imageGalleryStatus"),
+  imageGalleryGrid: document.getElementById("imageGalleryGrid"),
   activeToolStat: document.getElementById("activeToolStat"),
   backendStat: document.getElementById("backendStat")
 };
@@ -234,7 +252,12 @@ function renderTool(tool) {
     backendPowered ? "ok" : ""
   );
   setUpload(tool);
+  setImageControls(tool);
   setLoading(false);
+
+  if (isImageGenerator(tool)) {
+    void loadImageGallery();
+  }
 }
 
 function isBackendTool(tool) {
@@ -288,6 +311,14 @@ function setUpload(tool) {
   els.uploadRow.classList.add("active");
   els.file.accept = tool.upload.accept;
   els.file.multiple = Boolean(tool.upload.multiple);
+}
+
+function setImageControls(tool) {
+  const active = isImageGenerator(tool);
+  els.imageControls.classList.toggle("active", active);
+  els.imageGallery.classList.toggle("active", active);
+  els.generateSimilar.disabled = !state.lastImageRequest;
+  els.useEnhancedPrompt.disabled = !state.lastEnhancedPrompt;
 }
 
 function setStatus(message, type = "") {
@@ -345,9 +376,7 @@ async function handleSubmit(event) {
     }
 
     if (tool.id === "image") {
-      const data = await runImage(prompt, meta);
-      renderImageResult(data);
-      setStatus(`${tool.title} finished through ai-image / Hugging Face.`, "ok");
+      await generateImageFromRequest(imageRequestFromForm());
       return;
     }
 
@@ -363,7 +392,11 @@ async function handleSubmit(event) {
     setStatus(`${tool.title} placeholder ready. Provider wiring can come next.`, "ok");
   } catch (error) {
     console.error(`${tool.title} failed:`, error);
-    els.output.textContent = error.message || "The tool fell over. Very elegant.";
+    if (tool.id === "image") {
+      renderErrorState(error);
+    } else {
+      els.output.textContent = error.message || "The tool fell over. Very elegant.";
+    }
     setStatus(`${tool.title} failed. Check the console for the ugly bits.`, "error");
   } finally {
     setLoading(false);
@@ -389,21 +422,61 @@ async function runChat(prompt) {
   setStatus(`Chat AI replied through ${data?.provider || "ai-chat"}${data?.model ? ` (${data.model})` : ""}.`, "ok");
 }
 
-async function runImage(prompt, meta) {
-  if (!prompt) {
+function imageRequestFromForm(overrides = {}) {
+  const prompt = String(overrides.prompt ?? els.prompt.value).trim();
+  const extraDetails = els.meta.value.trim();
+  const fullPrompt = [prompt, extraDetails && `Extra direction: ${extraDetails}`].filter(Boolean).join("\n\n");
+
+  return {
+    prompt: fullPrompt,
+    basePrompt: prompt,
+    style: String(overrides.style ?? els.imageStyle.value ?? "Default").trim() || "Default",
+    aspectRatio: String(overrides.aspectRatio ?? els.imageAspectRatio.value ?? "1:1").trim() || "1:1",
+    negativePrompt: String(overrides.negativePrompt ?? els.imageNegativePrompt.value ?? "").trim()
+  };
+}
+
+async function generateImageFromRequest(request, options = {}) {
+  if (!request.prompt) {
     throw new Error("Describe the image first. Blank canvas, blank results.");
   }
 
-  const { style, aspectRatio } = parseImageMeta(meta);
+  setLoading(true);
+  setStatus(options.status || "Image Generator is working...");
+  renderLoadingState(options.loadingMessage || "Generating image with Hugging Face...");
+
+  try {
+    const data = await runImage(request);
+    renderImageResult(data, request);
+    state.lastImageRequest = request;
+    state.lastImageResult = data;
+    els.generateSimilar.disabled = false;
+
+    const saveMessage = await saveImageGeneration(data, request);
+    setStatus(saveMessage || "Image Generator finished through ai-image / Hugging Face.", "ok");
+    await loadImageGallery(true);
+    return data;
+  } catch (error) {
+    console.error("Image generation failed:", error);
+    renderErrorState(error);
+    setStatus("Image Generator failed. The real error is shown below.", "error");
+    throw error;
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function runImage(request) {
   const response = await fetch(AI_IMAGE_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      prompt,
-      style,
-      aspectRatio
+      prompt: request.prompt,
+      style: request.style,
+      aspectRatio: request.aspectRatio,
+      negativePrompt: request.negativePrompt
     })
   });
 
@@ -422,7 +495,10 @@ async function runImage(prompt, meta) {
       responseText,
       data
     });
-    throw new Error(data?.details || data?.error || `ai-image returned ${response.status}.`);
+    const message = data?.details || data?.error || `ai-image returned ${response.status}.`;
+    const imageError = new Error(message);
+    imageError.details = data;
+    throw imageError;
   }
 
   const image_url = String(data?.image_url || "").trim();
@@ -432,15 +508,6 @@ async function runImage(prompt, meta) {
     ...data,
     image_url
   };
-}
-
-function parseImageMeta(meta) {
-  const text = meta || "";
-  const match = text.match(/\b(1:1|16:9|9:16|4:3|3:4|square|landscape|portrait)\b/i);
-  const aspectRatio = match ? match[1] : "1:1";
-  const style = text.replace(match?.[0] || "", "").replace(/\s{2,}/g, " ").trim() || "dark modern cinematic";
-
-  return { style, aspectRatio };
 }
 
 function renderLoadingState(message) {
@@ -458,7 +525,7 @@ function renderLoadingState(message) {
   els.output.replaceChildren(wrap);
 }
 
-function renderImageResult(data) {
+function renderImageResult(data, request = state.lastImageRequest) {
   const wrap = document.createElement("div");
   wrap.className = "image-result";
 
@@ -469,7 +536,11 @@ function renderImageResult(data) {
 
   const meta = document.createElement("p");
   meta.className = "image-result-meta";
-  meta.textContent = `Provider: ${data.provider || "huggingface"}${data.model ? ` (${data.model})` : ""}`;
+  meta.textContent = [
+    `Provider: ${data.provider || "huggingface"}${data.model ? ` (${data.model})` : ""}`,
+    request?.style && `Style: ${request.style}`,
+    request?.aspectRatio && `Aspect: ${request.aspectRatio}`
+  ].filter(Boolean).join(" | ");
 
   const download = document.createElement("a");
   download.className = "download-button";
@@ -479,6 +550,213 @@ function renderImageResult(data) {
 
   wrap.append(image, meta, download);
   els.output.replaceChildren(wrap);
+}
+
+function renderErrorState(error) {
+  const box = document.createElement("div");
+  box.className = "error-box";
+  const details = error?.details?.failures?.length
+    ? `\n\nModel failures:\n${error.details.failures.map((failure) => `- ${failure.model}: ${failure.error}`).join("\n")}`
+    : "";
+  box.textContent = `${error?.message || "Image generation failed."}${details}`;
+  els.output.replaceChildren(box);
+}
+
+async function enhanceImagePrompt() {
+  const roughPrompt = els.prompt.value.trim();
+  if (!roughPrompt) {
+    setStatus("Write a rough prompt before enhancing it.", "error");
+    return;
+  }
+
+  setImageActionLoading(true, "Enhancing...");
+  setStatus("Enhancing image prompt through ai-chat...");
+
+  try {
+    const data = await callAiChat({
+      messages: [
+        {
+          role: "system",
+          content: "Rewrite this as a high-quality image generation prompt. Keep the user's idea, add detail, style, lighting, composition, and avoid extra commentary."
+        },
+        {
+          role: "user",
+          content: roughPrompt
+        }
+      ]
+    });
+
+    const enhanced = String(data?.text || data?.reply || "").trim();
+    if (!enhanced) throw new Error("ai-chat returned an empty enhanced prompt.");
+
+    state.lastEnhancedPrompt = enhanced;
+    els.prompt.value = enhanced;
+    els.useEnhancedPrompt.disabled = false;
+    els.enhancedPromptPreview.textContent = enhanced;
+    els.enhancedPromptPreview.classList.add("active");
+    setStatus("Enhanced prompt ready. Review it, then click Generate Image.", "ok");
+  } catch (error) {
+    console.error("Image prompt enhancement failed:", error);
+    renderErrorState(error);
+    setStatus("Prompt enhancement failed.", "error");
+  } finally {
+    setImageActionLoading(false);
+  }
+}
+
+function useEnhancedPrompt() {
+  if (!state.lastEnhancedPrompt) return;
+  els.prompt.value = state.lastEnhancedPrompt;
+  setStatus("Enhanced prompt loaded into the Image Generator.", "ok");
+}
+
+async function generateSimilarImage() {
+  if (!state.lastImageRequest) {
+    setStatus("Generate an image first, then you can make a similar one.", "error");
+    return;
+  }
+
+  const similarRequest = {
+    ...state.lastImageRequest,
+    prompt: `${state.lastImageRequest.prompt}. alternate variation, same subject, new composition, same style`
+  };
+
+  els.prompt.value = similarRequest.prompt;
+  await generateImageFromRequest(similarRequest, {
+    status: "Generating a similar image...",
+    loadingMessage: "Generating similar variation..."
+  });
+}
+
+async function copyImagePrompt() {
+  const prompt = els.prompt.value.trim();
+  if (!prompt) {
+    setStatus("There is no prompt to copy.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(prompt);
+    setStatus("Prompt copied.", "ok");
+  } catch (error) {
+    console.error("Prompt copy failed:", error);
+    setStatus("Prompt copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function setImageActionLoading(isLoading, label = "Working...") {
+  els.enhanceImagePrompt.disabled = isLoading;
+  els.copyImagePrompt.disabled = isLoading;
+  els.generateSimilar.disabled = isLoading || !state.lastImageRequest;
+  els.useEnhancedPrompt.disabled = isLoading || !state.lastEnhancedPrompt;
+  if (isLoading) els.enhanceImagePrompt.textContent = label;
+  else els.enhanceImagePrompt.textContent = "Enhance Prompt";
+}
+
+async function saveImageGeneration(data, request) {
+  try {
+    const { user, error } = await getCurrentUserAndProfile();
+    if (error) console.error("AI generation auth lookup failed:", error);
+
+    const payload = {
+      user_id: user?.id || null,
+      tool_type: "image",
+      prompt: request.prompt,
+      style: request.style,
+      aspect_ratio: request.aspectRatio,
+      negative_prompt: request.negativePrompt,
+      provider: data.provider || "huggingface",
+      model: data.model || null,
+      output_url: data.image_url,
+      output_text: null,
+      metadata: {
+        width: data.width || null,
+        height: data.height || null,
+        mimeType: data.mimeType || null,
+        hf_provider: data.hf_provider || null
+      }
+    };
+
+    const { error: insertError } = await supabase
+      .from("ai_generations")
+      .insert(payload);
+
+    if (insertError) {
+      console.error("AI generation save failed:", insertError);
+      return `Image generated, but gallery save failed: ${insertError.message}`;
+    }
+
+    return "Image generated and saved to gallery.";
+  } catch (error) {
+    console.error("AI generation save crashed:", error);
+    return `Image generated, but gallery save failed: ${error.message || error}`;
+  }
+}
+
+async function loadImageGallery(force = false) {
+  if (state.galleryLoaded && !force) return;
+
+  els.imageGalleryStatus.textContent = "Loading gallery...";
+  els.imageGalleryGrid.replaceChildren();
+
+  try {
+    const { user, error } = await getCurrentUserAndProfile();
+    if (error) console.error("AI gallery auth lookup failed:", error);
+
+    let query = supabase
+      .from("ai_generations")
+      .select("id, user_id, prompt, style, aspect_ratio, provider, model, output_url, created_at")
+      .eq("tool_type", "image")
+      .order("created_at", { ascending: false })
+      .limit(12);
+
+    query = user?.id
+      ? query.or(`user_id.eq.${user.id},user_id.is.null`)
+      : query.is("user_id", null);
+
+    const { data, error: galleryError } = await query;
+    if (galleryError) {
+      console.warn("AI gallery load failed:", galleryError);
+      els.imageGalleryStatus.textContent = `Gallery unavailable: ${galleryError.message}`;
+      return;
+    }
+
+    state.galleryLoaded = true;
+    renderImageGallery(data || []);
+  } catch (error) {
+    console.error("AI gallery load crashed:", error);
+    els.imageGalleryStatus.textContent = `Gallery unavailable: ${error.message || error}`;
+  }
+}
+
+function renderImageGallery(rows) {
+  els.imageGalleryGrid.replaceChildren();
+
+  if (!rows.length) {
+    els.imageGalleryStatus.textContent = "No images saved yet.";
+    return;
+  }
+
+  els.imageGalleryStatus.textContent = `${rows.length} recent image${rows.length === 1 ? "" : "s"}`;
+
+  rows.forEach((row) => {
+    const card = document.createElement("article");
+    card.className = "image-gallery-card";
+
+    const image = document.createElement("img");
+    image.src = row.output_url;
+    image.alt = row.prompt || "Saved AI image";
+    image.loading = "lazy";
+
+    const caption = document.createElement("p");
+    caption.textContent = [row.style, row.aspect_ratio, row.model].filter(Boolean).join(" | ");
+
+    const prompt = document.createElement("p");
+    prompt.textContent = row.prompt || "Untitled image";
+
+    card.append(image, caption, prompt);
+    els.imageGalleryGrid.append(card);
+  });
 }
 
 async function runStructuredAiTool(tool, prompt, meta) {
@@ -597,8 +875,15 @@ function clearTool() {
   els.meta.value = "";
   els.file.value = "";
   els.fileList.textContent = "No file selected.";
+  els.imageNegativePrompt.value = "";
+  els.enhancedPromptPreview.textContent = "";
+  els.enhancedPromptPreview.classList.remove("active");
 
   if (activeTool().id === "chat") state.chatMessages = [];
+  if (activeTool().id === "image") {
+    state.lastEnhancedPrompt = "";
+    els.useEnhancedPrompt.disabled = true;
+  }
   renderTool(activeTool());
 }
 
@@ -607,6 +892,10 @@ function boot() {
   renderTool(activeTool());
   els.form.addEventListener("submit", handleSubmit);
   els.clear.addEventListener("click", clearTool);
+  els.enhanceImagePrompt.addEventListener("click", enhanceImagePrompt);
+  els.useEnhancedPrompt.addEventListener("click", useEnhancedPrompt);
+  els.generateSimilar.addEventListener("click", generateSimilarImage);
+  els.copyImagePrompt.addEventListener("click", copyImagePrompt);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });
