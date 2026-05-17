@@ -12,7 +12,11 @@ const jsonHeaders = {
   "Content-Type": "application/json"
 };
 
-const DEFAULT_MODEL = "stabilityai/stable-diffusion-xl-base-1.0";
+const FALLBACK_MODELS = [
+  "black-forest-labs/FLUX.1-schnell",
+  "stabilityai/stable-diffusion-3.5-large",
+  "runwayml/stable-diffusion-v1-5"
+];
 const DEFAULT_PROVIDER = "hf-inference";
 const HF_TIMEOUT_MS = 45000;
 
@@ -20,6 +24,15 @@ type ImageRequestBody = {
   prompt?: unknown;
   style?: unknown;
   aspectRatio?: unknown;
+};
+
+type ModelFailure = {
+  model: string;
+  error: string;
+};
+
+type ImageGenerationError = Error & {
+  failures?: ModelFailure[];
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -81,53 +94,72 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
+function imageModelsFromEnvironment() {
+  const configuredModel = Deno.env.get("HF_IMAGE_MODEL")?.trim();
+  const models = configuredModel ? [configuredModel, ...FALLBACK_MODELS] : FALLBACK_MODELS;
+  return [...new Set(models)];
+}
+
 async function generateWithHuggingFace(prompt: string, style: string, aspectRatio: string) {
   const apiKey = Deno.env.get("HUGGINGFACE_API_KEY")?.trim();
   if (!apiKey) {
     throw new Error("Missing HUGGINGFACE_API_KEY");
   }
 
-  const model = Deno.env.get("HUGGINGFACE_IMAGE_MODEL")?.trim() || DEFAULT_MODEL;
   const provider = Deno.env.get("HUGGINGFACE_IMAGE_PROVIDER")?.trim() || DEFAULT_PROVIDER;
   const dimensions = aspectDimensions(aspectRatio);
   const fullPrompt = buildImagePrompt(prompt, style);
   const client = new InferenceClient(apiKey);
+  const failures: ModelFailure[] = [];
 
-  const image = await withTimeout(
-    client.textToImage({
-      provider,
-      model,
-      inputs: fullPrompt,
-      parameters: {
-        width: dimensions.width,
-        height: dimensions.height
+  for (const model of imageModelsFromEnvironment()) {
+    try {
+      const image = await withTimeout(
+        client.textToImage({
+          provider,
+          model,
+          inputs: fullPrompt,
+          parameters: {
+            width: dimensions.width,
+            height: dimensions.height
+          }
+        }),
+        HF_TIMEOUT_MS,
+        `Hugging Face image request timed out for ${model}.`
+      );
+
+      if (!image || typeof (image as Blob).arrayBuffer !== "function") {
+        throw new Error("Hugging Face returned an invalid image response.");
       }
-    }),
-    HF_TIMEOUT_MS,
-    "Hugging Face image request timed out."
-  );
 
-  if (!image || typeof (image as Blob).arrayBuffer !== "function") {
-    throw new Error("Hugging Face returned an invalid image response.");
+      const blob = image as Blob;
+      const mimeType = blob.type || "image/png";
+      const base64 = arrayBufferToBase64(await blob.arrayBuffer());
+
+      return {
+        ok: true,
+        provider: "huggingface",
+        hf_provider: provider,
+        model,
+        prompt,
+        style,
+        aspectRatio,
+        width: dimensions.width,
+        height: dimensions.height,
+        mimeType,
+        image_url: `data:${mimeType};base64,${base64}`
+      };
+    } catch (error) {
+      const details = errorDetails(error);
+      failures.push({ model, error: details });
+      console.error(`Hugging Face image model failed (${model}):`, error);
+    }
   }
 
-  const blob = image as Blob;
-  const mimeType = blob.type || "image/png";
-  const base64 = arrayBufferToBase64(await blob.arrayBuffer());
-
-  return {
-    ok: true,
-    provider: "huggingface",
-    hf_provider: provider,
-    model,
-    prompt,
-    style,
-    aspectRatio,
-    width: dimensions.width,
-    height: dimensions.height,
-    mimeType,
-    image_url: `data:${mimeType};base64,${base64}`
-  };
+  const detailLines = failures.map((failure) => `${failure.model}: ${failure.error}`);
+  const error = new Error(`All Hugging Face image models failed. ${detailLines.join(" | ")}`);
+  (error as ImageGenerationError).failures = failures;
+  throw error;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
@@ -185,11 +217,14 @@ async function handleRequest(req: Request) {
     return jsonResponse(result);
   } catch (error) {
     console.error("AI image function provider error:", error);
-    return jsonResponse({
+    const failures = (error as ImageGenerationError)?.failures;
+    const body: Record<string, unknown> = {
       ok: false,
       error: "Hugging Face image generation failed",
       details: errorDetails(error)
-    }, 502);
+    };
+    if (failures?.length) body.failures = failures;
+    return jsonResponse(body, 502);
   }
 }
 
