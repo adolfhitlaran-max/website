@@ -2,3 +2,4 @@
 *.mov
 *.MOV
 *.MP4
+supabase/.env.local

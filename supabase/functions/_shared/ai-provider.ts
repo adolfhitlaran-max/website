@@ -23,7 +23,7 @@ type GenerateAiTextOptions = {
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
-const DEFAULT_OLLAMA_MODEL = "qwen3:8b";
+const DEFAULT_OLLAMA_MODEL = "llama3.2:3b";
 const DEFAULT_TIMEOUT_MS = 12000;
 const DEFAULT_FALLBACK_REPLY = "I had a thought and immediately lost it. Try again, genius.";
 
