@@ -62,10 +62,11 @@ const tools = [
     id: "upscaler",
     title: "Upscaler",
     icon: "UP",
-    description: "Mock an image upscaling request with target detail level and cleanup notes.",
-    prompt: "Describe enhancement priorities...",
-    meta: "Scale factor or target use",
+    description: "Upscale images locally with browser canvas smoothing, optional sharpening, and PNG export.",
+    prompt: "Optional enhancement notes...",
+    meta: "Optional target use",
     action: "Upscale",
+    browserTool: "canvas-upscaler",
     upload: { accept: "image/*", multiple: false }
   },
   {
@@ -175,6 +176,10 @@ const state = {
   lastBackgroundBlob: null,
   lastBackgroundUrl: "",
   lastBackgroundOriginalName: "",
+  lastUpscaledBlob: null,
+  lastUpscaledUrl: "",
+  lastUpscalerOriginalUrl: "",
+  lastUpscalerOriginalName: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -231,6 +236,11 @@ const els = {
   backgroundOutputActions: document.getElementById("backgroundOutputActions"),
   downloadBackgroundPng: document.getElementById("downloadBackgroundPngButton"),
   sendBackgroundToImage: document.getElementById("sendBackgroundToImageButton"),
+  upscalerControls: document.getElementById("upscalerControls"),
+  upscalerScale: document.getElementById("upscalerScale"),
+  upscalerSharpen: document.getElementById("upscalerSharpen"),
+  upscalerOutputActions: document.getElementById("upscalerOutputActions"),
+  downloadUpscaledPng: document.getElementById("downloadUpscaledPngButton"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
@@ -298,6 +308,7 @@ function renderTool(tool) {
   setCodeControls(tool);
   setOcrControls(tool);
   setBackgroundControls(tool);
+  setUpscalerControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -338,10 +349,15 @@ function isBackgroundRemover(tool) {
   return tool.id === "background";
 }
 
+function isUpscalerTool(tool) {
+  return tool.id === "upscaler";
+}
+
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
   if (tool.browserTool === "tesseract") return "OCR is powered by Tesseract.js locally in your browser. No image upload or API key needed.";
   if (tool.browserTool === "background-removal") return "Browser background removal runs locally and exports a transparent PNG. No Supabase upload or API key needed.";
+  if (tool.browserTool === "canvas-upscaler") return "Browser Canvas upscales images locally with smoothing and optional sharpening. No Supabase upload or API key needed.";
   if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
   if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
   if (tool.id === "code") return "Code Helper is connected to ai-chat / Ollama.";
@@ -364,6 +380,10 @@ function outputIntro(tool) {
 
   if (isBackgroundRemover(tool)) {
     return "Upload an image and the transparent PNG preview will show up here.";
+  }
+
+  if (isUpscalerTool(tool)) {
+    return "Upload an image, choose a scale, and the before/after preview will show up here.";
   }
 
   if (tool.aiTool) {
@@ -465,6 +485,17 @@ function setBackgroundOutputActions(isLoading = false) {
   els.sendBackgroundToImage.disabled = disabled;
 }
 
+function setUpscalerControls(tool) {
+  const active = isUpscalerTool(tool);
+  els.upscalerControls.classList.toggle("active", active);
+  els.upscalerOutputActions.classList.toggle("active", active);
+  setUpscalerOutputActions();
+}
+
+function setUpscalerOutputActions(isLoading = false) {
+  els.downloadUpscaledPng.disabled = isLoading || !state.lastUpscaledBlob;
+}
+
 function setStatus(message, type = "") {
   els.status.className = `status-line ${type}`.trim();
   els.status.textContent = message;
@@ -479,6 +510,7 @@ function setLoading(isLoading) {
   if (activeTool().id === "code") setCodeOutputActions(isLoading);
   if (activeTool().id === "ocr") setOcrOutputActions(isLoading);
   if (activeTool().id === "background") setBackgroundOutputActions(isLoading);
+  if (activeTool().id === "upscaler") setUpscalerOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -515,6 +547,11 @@ async function handleSubmit(event) {
     return;
   }
 
+  if (tool.id === "upscaler" && !selectedFiles().length) {
+    setStatus("Upload an image first. Upscaling imaginary pixels remains illegal.", "error");
+    return;
+  }
+
   if (!prompt && !selectedFiles().length) {
     setStatus("Give the tool a prompt or a file. Ideally both, because we are not mind readers.", "error");
     return;
@@ -524,6 +561,8 @@ async function handleSubmit(event) {
   setStatus(`${tool.title} is working...`);
   if (tool.id === "image") {
     renderLoadingState("Generating image with Hugging Face...");
+  } else if (tool.id === "upscaler") {
+    renderLoadingState("Upscaling locally with browser canvas...");
   } else {
     els.output.textContent = "Thinking. Dramatically, of course.";
   }
@@ -550,6 +589,13 @@ async function handleSubmit(event) {
       const result = await runBackgroundRemoval();
       renderBackgroundRemovalResult(result);
       setStatus("Background removed locally. Transparent PNG ready.", "ok");
+      return;
+    }
+
+    if (tool.id === "upscaler") {
+      const result = await runUpscaler();
+      renderUpscalerResult(result);
+      setStatus(`Upscaled locally to ${result.outputWidth} x ${result.outputHeight}.`, "ok");
       return;
     }
 
@@ -1209,6 +1255,214 @@ function clearBackgroundResultUrl() {
   state.lastBackgroundUrl = "";
 }
 
+async function runUpscaler() {
+  const file = selectedFiles()[0];
+  if (!file) {
+    throw new Error("Upload an image before upscaling.");
+  }
+
+  if (!isSupportedBrowserImage(file)) {
+    throw new Error("Upscaler only accepts image files.");
+  }
+
+  const scale = Number(els.upscalerScale.value || 2);
+  if (![2, 4].includes(scale)) {
+    throw new Error("Upscaler scale must be 2x or 4x.");
+  }
+
+  clearUpscalerResultUrls();
+  state.lastUpscaledBlob = null;
+  state.lastUpscalerOriginalName = file.name || "image";
+  setUpscalerOutputActions(true);
+  renderLoadingState("Loading image into browser canvas...");
+  setStatus("Browser Canvas: loading image...");
+
+  const image = await loadImageForCanvas(file);
+  const inputWidth = image.naturalWidth || image.width;
+  const inputHeight = image.naturalHeight || image.height;
+  if (!inputWidth || !inputHeight) {
+    throw new Error("Could not read image dimensions.");
+  }
+
+  const outputWidth = inputWidth * scale;
+  const outputHeight = inputHeight * scale;
+  const outputPixels = outputWidth * outputHeight;
+  if (outputPixels > 90000000) {
+    throw new Error("That upscale would be too large for a browser canvas. Try 2x or a smaller image.");
+  }
+
+  setStatus(`Browser Canvas: drawing ${scale}x upscale...`);
+  const canvas = document.createElement("canvas");
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+  const context = canvas.getContext("2d", { willReadFrequently: Boolean(els.upscalerSharpen.checked) });
+  if (!context) {
+    throw new Error("Your browser could not create a canvas context.");
+  }
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(image, 0, 0, outputWidth, outputHeight);
+
+  if (els.upscalerSharpen.checked) {
+    setStatus("Browser Canvas: applying sharpen filter...");
+    applySharpenFilter(context, outputWidth, outputHeight);
+  }
+
+  setStatus("Browser Canvas: encoding PNG...");
+  const blob = await canvasToPngBlob(canvas);
+  state.lastUpscaledBlob = blob;
+  state.lastUpscaledUrl = URL.createObjectURL(blob);
+  state.lastUpscalerOriginalUrl = URL.createObjectURL(file);
+  setUpscalerOutputActions();
+
+  return {
+    url: state.lastUpscaledUrl,
+    originalUrl: state.lastUpscalerOriginalUrl,
+    blob,
+    name: state.lastUpscalerOriginalName,
+    scale,
+    sharpen: Boolean(els.upscalerSharpen.checked),
+    inputWidth,
+    inputHeight,
+    outputWidth,
+    outputHeight
+  };
+}
+
+function loadImageForCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("The uploaded image could not be decoded."));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Browser canvas could not export the upscaled PNG."));
+    }, "image/png");
+  });
+}
+
+function applySharpenFilter(context, width, height) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const source = imageData.data;
+  const output = new Uint8ClampedArray(source);
+  const kernel = [
+    0, -1, 0,
+    -1, 5, -1,
+    0, -1, 0
+  ];
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const pixelIndex = (y * width + x) * 4;
+      for (let channel = 0; channel < 3; channel += 1) {
+        let value = 0;
+        for (let ky = -1; ky <= 1; ky += 1) {
+          for (let kx = -1; kx <= 1; kx += 1) {
+            const weight = kernel[(ky + 1) * 3 + (kx + 1)];
+            const sampleIndex = ((y + ky) * width + (x + kx)) * 4 + channel;
+            value += source[sampleIndex] * weight;
+          }
+        }
+        output[pixelIndex + channel] = Math.max(0, Math.min(255, value));
+      }
+    }
+  }
+
+  imageData.data.set(output);
+  context.putImageData(imageData, 0, 0);
+}
+
+function renderUpscalerResult(result) {
+  const wrap = document.createElement("div");
+  wrap.className = "upscaler-result";
+
+  const grid = document.createElement("div");
+  grid.className = "before-after-grid";
+
+  const before = upscalerPreviewPanel("Before", result.originalUrl, `${result.inputWidth} x ${result.inputHeight}`);
+  const after = upscalerPreviewPanel("After", result.url, `${result.outputWidth} x ${result.outputHeight}`);
+  grid.append(before, after);
+
+  const meta = document.createElement("p");
+  meta.className = "image-result-meta";
+  meta.textContent = [
+    `${result.name || "Image"} upscaled ${result.scale}x`,
+    `Output: ${result.outputWidth} x ${result.outputHeight}`,
+    result.sharpen ? "Sharpen: on" : "Sharpen: off",
+    `PNG: ${formatBytes(result.blob.size)}`
+  ].join(" | ");
+
+  wrap.append(grid, meta);
+  els.output.replaceChildren(wrap);
+}
+
+function upscalerPreviewPanel(label, src, dimensions) {
+  const panel = document.createElement("figure");
+  panel.className = "preview-panel";
+
+  const image = document.createElement("img");
+  image.src = src;
+  image.alt = `${label} upscaler preview`;
+  image.loading = "lazy";
+
+  const caption = document.createElement("figcaption");
+  caption.textContent = `${label}: ${dimensions}`;
+
+  panel.append(image, caption);
+  return panel;
+}
+
+function downloadUpscaledPng() {
+  if (!state.lastUpscaledBlob || !state.lastUpscaledUrl) {
+    setStatus("Upscale an image first, then download the PNG.", "error");
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = state.lastUpscaledUrl;
+  link.download = upscaledOutputFilename(state.lastUpscalerOriginalName);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setStatus("Upscaled PNG downloaded.", "ok");
+}
+
+function upscaledOutputFilename(filename) {
+  const base = String(filename || "image")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-z0-9-_]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "image";
+
+  return `${base}-upscaled-${els.upscalerScale.value || "2"}x.png`;
+}
+
+function clearUpscalerResultUrls() {
+  if (state.lastUpscaledUrl) {
+    URL.revokeObjectURL(state.lastUpscaledUrl);
+  }
+  if (state.lastUpscalerOriginalUrl) {
+    URL.revokeObjectURL(state.lastUpscalerOriginalUrl);
+  }
+
+  state.lastUpscaledUrl = "";
+  state.lastUpscalerOriginalUrl = "";
+}
+
 async function runPromptEnhancer(prompt, meta) {
   if (!prompt) {
     throw new Error("Paste a rough prompt first. The enhancer needs something to enhance.");
@@ -1686,7 +1940,6 @@ function placeholderSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
-    upscaler: "Upscale placeholder ready. Real provider should return original/enhanced comparison data.",
     voice: "Voice job placeholder ready. Real provider should return an audio URL and transcript.",
     music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
     social: "Social post placeholder ready. Real provider should return short post variants."
@@ -1733,6 +1986,12 @@ function clearTool() {
     state.lastBackgroundOriginalName = "";
     setBackgroundOutputActions();
   }
+  if (activeTool().id === "upscaler") {
+    clearUpscalerResultUrls();
+    state.lastUpscaledBlob = null;
+    state.lastUpscalerOriginalName = "";
+    setUpscalerOutputActions();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -1764,6 +2023,7 @@ function boot() {
   els.sendOcrToCode.addEventListener("click", sendOcrToCodeHelper);
   els.downloadBackgroundPng.addEventListener("click", downloadBackgroundPng);
   els.sendBackgroundToImage.addEventListener("click", sendBackgroundToImageGenerator);
+  els.downloadUpscaledPng.addEventListener("click", downloadUpscaledPng);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });

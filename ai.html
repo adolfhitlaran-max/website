@@ -356,10 +356,29 @@
       border-color: rgba(0, 213, 255, 0.55);
     }
 
+    .checkbox-row {
+      min-height: 3rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.62rem;
+      border: 1px solid rgba(245, 239, 226, 0.16);
+      border-radius: var(--radius);
+      padding: 0.78rem 0.85rem;
+      background: rgba(5, 6, 7, 0.74);
+      color: var(--text);
+    }
+
+    .checkbox-row input {
+      width: 1.05rem;
+      height: 1.05rem;
+      accent-color: var(--cyan);
+    }
+
     .image-controls,
     .prompt-controls,
     .lore-controls,
-    .code-controls {
+    .code-controls,
+    .upscaler-controls {
       display: none;
       gap: 0.85rem;
       border: 1px solid rgba(245, 239, 226, 0.14);
@@ -371,14 +390,16 @@
     .image-controls.active,
     .prompt-controls.active,
     .lore-controls.active,
-    .code-controls.active {
+    .code-controls.active,
+    .upscaler-controls.active {
       display: grid;
     }
 
     .image-controls-grid,
     .prompt-controls-grid,
     .lore-controls-grid,
-    .code-controls-grid {
+    .code-controls-grid,
+    .upscaler-controls-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
       gap: 0.75rem;
@@ -393,7 +414,8 @@
     .lore-output-actions,
     .code-output-actions,
     .ocr-output-actions,
-    .background-output-actions {
+    .background-output-actions,
+    .upscaler-output-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 0.65rem;
@@ -403,7 +425,8 @@
     .lore-output-actions,
     .code-output-actions,
     .ocr-output-actions,
-    .background-output-actions {
+    .background-output-actions,
+    .upscaler-output-actions {
       display: none;
       margin-top: 0.85rem;
     }
@@ -412,7 +435,8 @@
     .lore-output-actions.active,
     .code-output-actions.active,
     .ocr-output-actions.active,
-    .background-output-actions.active {
+    .background-output-actions.active,
+    .upscaler-output-actions.active {
       display: flex;
     }
 
@@ -421,7 +445,8 @@
     .lore-output-actions button,
     .code-output-actions button,
     .ocr-output-actions button,
-    .background-output-actions button {
+    .background-output-actions button,
+    .upscaler-output-actions button {
       min-height: 2.7rem;
       border: 1px solid rgba(245, 239, 226, 0.16);
       border-radius: 999px;
@@ -437,7 +462,8 @@
     .lore-output-actions button:disabled,
     .code-output-actions button:disabled,
     .ocr-output-actions button:disabled,
-    .background-output-actions button:disabled {
+    .background-output-actions button:disabled,
+    .upscaler-output-actions button:disabled {
       cursor: not-allowed;
       opacity: 0.48;
     }
@@ -459,9 +485,39 @@
     .lore-result,
     .code-result,
     .ocr-result,
-    .background-result {
+    .background-result,
+    .upscaler-result {
       display: grid;
       gap: 0.7rem;
+    }
+
+    .before-after-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.8rem;
+    }
+
+    .preview-panel {
+      margin: 0;
+      overflow: hidden;
+      border: 1px solid rgba(245, 239, 226, 0.12);
+      border-radius: var(--radius);
+      background: rgba(245, 239, 226, 0.045);
+    }
+
+    .preview-panel img {
+      display: block;
+      width: 100%;
+      max-height: 22rem;
+      object-fit: contain;
+      background: rgba(0, 0, 0, 0.28);
+    }
+
+    .preview-panel figcaption {
+      padding: 0.7rem 0.8rem;
+      color: rgba(245, 239, 226, 0.82);
+      font-size: 0.82rem;
+      font-weight: 900;
     }
 
     .prompt-result-label {
@@ -777,6 +833,7 @@
       .code-output-actions,
       .ocr-output-actions,
       .background-output-actions,
+      .upscaler-output-actions,
       .actions {
         align-items: stretch;
         flex-direction: column;
@@ -790,9 +847,14 @@
       .code-output-actions button,
       .ocr-output-actions button,
       .background-output-actions button,
+      .upscaler-output-actions button,
       .download-button,
       .file-label {
         width: 100%;
+      }
+
+      .before-after-grid {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -820,7 +882,7 @@
     <section class="lab-hero">
       <p class="eyebrow">Tool Bench</p>
       <h1>AI Lab</h1>
-      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR and background removal run locally in the browser. Video, voice, music, and upscaling stay staged until their own providers are plugged in.</p>
+      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR, background removal, and upscaling run locally in the browser. Video, voice, and music stay staged until their own providers are plugged in.</p>
     </section>
 
     <section class="lab-shell" aria-label="AI tools">
@@ -975,6 +1037,25 @@
               </div>
             </div>
 
+            <div id="upscalerControls" class="upscaler-controls">
+              <div class="upscaler-controls-grid">
+                <label>
+                  Scale
+                  <select id="upscalerScale" name="upscalerScale">
+                    <option value="2">2x</option>
+                    <option value="4">4x</option>
+                  </select>
+                </label>
+                <label>
+                  Enhancement
+                  <span class="checkbox-row">
+                    <input id="upscalerSharpen" name="upscalerSharpen" type="checkbox" checked />
+                    Sharpen
+                  </span>
+                </label>
+              </div>
+            </div>
+
             <div id="uploadRow" class="upload-row">
               <label class="file-label">
                 Upload File
@@ -1021,6 +1102,10 @@
             <button id="sendBackgroundToImageButton" type="button" disabled>Send to Image Generator</button>
           </div>
 
+          <div id="upscalerOutputActions" class="upscaler-output-actions">
+            <button id="downloadUpscaledPngButton" type="button" disabled>Download Upscaled PNG</button>
+          </div>
+
           <section id="imageGallery" class="image-gallery" aria-label="Recent image generations">
             <div class="image-gallery-head">
               <h3>Recent Images</h3>
@@ -1036,6 +1121,6 @@
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="scripts/ai-lab.js?v=background-remover-live-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=upscaler-live-20260517"></script>
 </body>
 </html>
