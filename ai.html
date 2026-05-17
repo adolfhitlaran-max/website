@@ -356,7 +356,9 @@
       border-color: rgba(0, 213, 255, 0.55);
     }
 
-    .image-controls {
+    .image-controls,
+    .prompt-controls,
+    .lore-controls {
       display: none;
       gap: 0.85rem;
       border: 1px solid rgba(245, 239, 226, 0.14);
@@ -365,11 +367,15 @@
       background: rgba(245, 239, 226, 0.045);
     }
 
-    .image-controls.active {
+    .image-controls.active,
+    .prompt-controls.active,
+    .lore-controls.active {
       display: grid;
     }
 
-    .image-controls-grid {
+    .image-controls-grid,
+    .prompt-controls-grid,
+    .lore-controls-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
       gap: 0.75rem;
@@ -379,13 +385,28 @@
       min-height: 6rem;
     }
 
-    .image-tool-actions {
+    .image-tool-actions,
+    .prompt-output-actions,
+    .lore-output-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 0.65rem;
     }
 
-    .image-tool-actions button {
+    .prompt-output-actions,
+    .lore-output-actions {
+      display: none;
+      margin-top: 0.85rem;
+    }
+
+    .prompt-output-actions.active,
+    .lore-output-actions.active {
+      display: flex;
+    }
+
+    .image-tool-actions button,
+    .prompt-output-actions button,
+    .lore-output-actions button {
       min-height: 2.7rem;
       border: 1px solid rgba(245, 239, 226, 0.16);
       border-radius: 999px;
@@ -396,7 +417,9 @@
       font-weight: 900;
     }
 
-    .image-tool-actions button:disabled {
+    .image-tool-actions button:disabled,
+    .prompt-output-actions button:disabled,
+    .lore-output-actions button:disabled {
       cursor: not-allowed;
       opacity: 0.48;
     }
@@ -412,6 +435,29 @@
 
     .enhanced-prompt-preview.active {
       display: block;
+    }
+
+    .prompt-result,
+    .lore-result {
+      display: grid;
+      gap: 0.7rem;
+    }
+
+    .prompt-result-label {
+      margin: 0;
+      color: var(--cyan);
+      font-size: 0.78rem;
+      font-weight: 950;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .prompt-result-body {
+      border-left: 3px solid var(--cyan);
+      padding: 0.85rem 0.95rem;
+      background: rgba(0, 213, 255, 0.07);
+      color: rgba(245, 239, 226, 0.9);
+      white-space: pre-wrap;
     }
 
     .upload-row {
@@ -664,7 +710,9 @@
       }
 
       .field-grid,
-      .image-controls-grid {
+      .image-controls-grid,
+      .prompt-controls-grid,
+      .lore-controls-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -685,6 +733,8 @@
 
       .upload-row,
       .image-tool-actions,
+      .prompt-output-actions,
+      .lore-output-actions,
       .actions {
         align-items: stretch;
         flex-direction: column;
@@ -693,6 +743,8 @@
       .generate-button,
       .ghost-button,
       .image-tool-actions button,
+      .prompt-output-actions button,
+      .lore-output-actions button,
       .download-button,
       .file-label {
         width: 100%;
@@ -799,6 +851,55 @@
               <div id="enhancedPromptPreview" class="enhanced-prompt-preview"></div>
             </div>
 
+            <div id="promptControls" class="prompt-controls">
+              <div class="prompt-controls-grid">
+                <label>
+                  Prompt Type
+                  <select id="promptMode" name="promptMode">
+                    <option value="Image Prompt">Image Prompt</option>
+                    <option value="Story/Lore Prompt">Story/Lore Prompt</option>
+                    <option value="Code Prompt">Code Prompt</option>
+                  </select>
+                </label>
+                <label>
+                  Output Target
+                  <input type="text" value="ai-chat / Ollama" disabled />
+                </label>
+              </div>
+            </div>
+
+            <div id="loreControls" class="lore-controls">
+              <div class="lore-controls-grid">
+                <label>
+                  Lore Type
+                  <select id="loreType" name="loreType">
+                    <option value="NPC">NPC</option>
+                    <option value="Faction">Faction</option>
+                    <option value="Quest">Quest</option>
+                    <option value="Myth">Myth</option>
+                    <option value="Artifact">Artifact</option>
+                    <option value="Location">Location</option>
+                    <option value="Timeline">Timeline</option>
+                    <option value="Religion/Cult">Religion/Cult</option>
+                    <option value="Monster">Monster</option>
+                    <option value="Kingdom">Kingdom</option>
+                  </select>
+                </label>
+                <label>
+                  Tone
+                  <select id="loreTone" name="loreTone">
+                    <option value="Dark Fantasy">Dark Fantasy</option>
+                    <option value="Biblical Epic">Biblical Epic</option>
+                    <option value="Mythological">Mythological</option>
+                    <option value="Conspiracy">Conspiracy</option>
+                    <option value="Sci-Fi">Sci-Fi</option>
+                    <option value="Medieval">Medieval</option>
+                    <option value="Comedic">Comedic</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
             <div id="uploadRow" class="upload-row">
               <label class="file-label">
                 Upload File
@@ -815,6 +916,18 @@
 
           <div id="toolOutput" class="output-area" aria-live="polite">Output will show up here.</div>
 
+          <div id="promptOutputActions" class="prompt-output-actions">
+            <button id="copyEnhancedPromptButton" type="button" disabled>Copy Enhanced Prompt</button>
+            <button id="sendPromptToImageButton" type="button" disabled>Send to Image Generator</button>
+            <button id="sendPromptToLoreButton" type="button" disabled>Send to Lore Generator</button>
+          </div>
+
+          <div id="loreOutputActions" class="lore-output-actions">
+            <button id="copyLoreButton" type="button" disabled>Copy Lore</button>
+            <button id="sendLoreToPromptButton" type="button" disabled>Send to Prompt Enhancer</button>
+            <button id="sendLoreToImageButton" type="button" disabled>Send to Image Generator</button>
+          </div>
+
           <section id="imageGallery" class="image-gallery" aria-label="Recent image generations">
             <div class="image-gallery-head">
               <h3>Recent Images</h3>
@@ -829,6 +942,6 @@
 
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
-  <script type="module" src="scripts/ai-lab.js?v=ai-image-upgrades-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=lore-generator-live-20260517"></script>
 </body>
 </html>

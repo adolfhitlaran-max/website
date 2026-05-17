@@ -93,7 +93,8 @@ const tools = [
     prompt: "Paste the messy prompt...",
     meta: "Target model or output format",
     action: "Enhance Prompt",
-    aiTool: "prompt"
+    live: true,
+    endpoint: "ai-chat"
   },
   {
     id: "lore",
@@ -103,7 +104,8 @@ const tools = [
     prompt: "Describe the world, character, faction, or artifact...",
     meta: "Tone, era, genre",
     action: "Generate Lore",
-    aiTool: "lore"
+    live: true,
+    endpoint: "ai-chat"
   },
   {
     id: "code",
@@ -129,22 +131,6 @@ const tools = [
 ];
 
 const aiToolPrompts = {
-  prompt: {
-    system: [
-      "You are an expert prompt engineer.",
-      "Rewrite rough prompts into stronger, detailed prompts with clear subject, context, style, constraints, and output format.",
-      "Return only the improved prompt unless the user asks for notes.",
-      "Keep it useful, specific, and ready to paste into another AI tool."
-    ].join(" ")
-  },
-  lore: {
-    system: [
-      "You are a game lore writer and worldbuilding designer.",
-      "Generate factions, NPCs, quests, myths, locations, conflicts, artifacts, and history from the user's idea.",
-      "Use clean sections and concrete names.",
-      "Make it playable, weird enough to remember, and easy to adapt."
-    ].join(" ")
-  },
   code: {
     system: [
       "You are a senior code helper.",
@@ -163,10 +149,21 @@ const aiToolPrompts = {
   }
 };
 
+const PROMPT_ENHANCER_SYSTEM_PROMPT = "You are a prompt engineer. Rewrite the user's rough prompt into a detailed, high-quality prompt. Preserve the original idea, add concrete details, style, composition, lighting, mood, constraints, and output format. Do not add commentary. Only return the improved prompt.";
+const LORE_GENERATOR_SYSTEM_PROMPT = "You are a worldbuilding and game-lore assistant. Generate rich, usable lore from the user's idea. Include name, summary, visual identity, history, conflict, secrets, hooks, and how it could be used in a game or story. Match the selected type and tone. Avoid generic filler.";
+
+const promptModeInstructions = {
+  "Image Prompt": "Optimize the improved prompt for image generation. Emphasize subject, visual composition, camera/framing, lighting, style, mood, texture, color, negative constraints if useful, and a clear image output format.",
+  "Story/Lore Prompt": "Optimize the improved prompt for worldbuilding and lore generation. Emphasize setting, factions, characters, conflicts, myths, locations, timeline hooks, tone, and the desired structured output.",
+  "Code Prompt": "Optimize the improved prompt for coding help. Emphasize goal, environment, language/framework, constraints, expected behavior, error context, deliverables, and verification steps."
+};
+
 const state = {
   activeId: tools[0].id,
   chatMessages: [],
   lastEnhancedPrompt: "",
+  lastPromptEnhanced: "",
+  lastLoreOutput: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -193,6 +190,19 @@ const els = {
   generateSimilar: document.getElementById("generateSimilarButton"),
   copyImagePrompt: document.getElementById("copyImagePromptButton"),
   enhancedPromptPreview: document.getElementById("enhancedPromptPreview"),
+  promptControls: document.getElementById("promptControls"),
+  promptMode: document.getElementById("promptMode"),
+  promptOutputActions: document.getElementById("promptOutputActions"),
+  copyEnhancedPrompt: document.getElementById("copyEnhancedPromptButton"),
+  sendPromptToImage: document.getElementById("sendPromptToImageButton"),
+  sendPromptToLore: document.getElementById("sendPromptToLoreButton"),
+  loreControls: document.getElementById("loreControls"),
+  loreType: document.getElementById("loreType"),
+  loreTone: document.getElementById("loreTone"),
+  loreOutputActions: document.getElementById("loreOutputActions"),
+  copyLore: document.getElementById("copyLoreButton"),
+  sendLoreToPrompt: document.getElementById("sendLoreToPromptButton"),
+  sendLoreToImage: document.getElementById("sendLoreToImageButton"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
@@ -248,6 +258,8 @@ function renderTool(tool) {
     backendPowered ? "ok" : ""
   );
   setUpload(tool);
+  setPromptControls(tool);
+  setLoreControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -264,8 +276,18 @@ function isImageGenerator(tool) {
   return tool.id === "image";
 }
 
+function isPromptEnhancer(tool) {
+  return tool.id === "prompt";
+}
+
+function isLoreGenerator(tool) {
+  return tool.id === "lore";
+}
+
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
+  if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
+  if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
   if (tool.endpoint === "ai-chat") return "Chat AI is connected to ai-chat.";
   return `${tool.title} is connected to ai-chat and the configured Ollama backend.`;
 }
@@ -310,6 +332,34 @@ function setImageControls(tool) {
   els.useEnhancedPrompt.disabled = !state.lastEnhancedPrompt;
 }
 
+function setPromptControls(tool) {
+  const active = isPromptEnhancer(tool);
+  els.promptControls.classList.toggle("active", active);
+  els.promptOutputActions.classList.toggle("active", active);
+  setPromptOutputActions();
+}
+
+function setPromptOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastPromptEnhanced;
+  els.copyEnhancedPrompt.disabled = disabled;
+  els.sendPromptToImage.disabled = disabled;
+  els.sendPromptToLore.disabled = disabled;
+}
+
+function setLoreControls(tool) {
+  const active = isLoreGenerator(tool);
+  els.loreControls.classList.toggle("active", active);
+  els.loreOutputActions.classList.toggle("active", active);
+  setLoreOutputActions();
+}
+
+function setLoreOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastLoreOutput;
+  els.copyLore.disabled = disabled;
+  els.sendLoreToPrompt.disabled = disabled;
+  els.sendLoreToImage.disabled = disabled;
+}
+
 function setStatus(message, type = "") {
   els.status.className = `status-line ${type}`.trim();
   els.status.textContent = message;
@@ -319,6 +369,8 @@ function setLoading(isLoading) {
   els.button.disabled = isLoading;
   els.button.textContent = isLoading ? "Working..." : activeTool().action;
   els.output.classList.toggle("loading", isLoading);
+  if (activeTool().id === "prompt") setPromptOutputActions(isLoading);
+  if (activeTool().id === "lore") setLoreOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -366,6 +418,20 @@ async function handleSubmit(event) {
 
     if (tool.id === "image") {
       await generateImageFromRequest(imageRequestFromForm());
+      return;
+    }
+
+    if (tool.id === "prompt") {
+      const text = await runPromptEnhancer(prompt, meta);
+      renderPromptEnhancerResult(text);
+      setStatus("Prompt Enhancer finished through ai-chat / Ollama.", "ok");
+      return;
+    }
+
+    if (tool.id === "lore") {
+      const text = await runLoreGenerator(prompt, meta);
+      renderLoreResult(text);
+      setStatus("Lore Generator finished through ai-chat / Ollama.", "ok");
       return;
     }
 
@@ -646,9 +712,13 @@ async function saveImageGeneration(data, request) {
   try {
     const { user, error } = await getCurrentUserAndProfile();
     if (error) console.error("AI generation auth lookup failed:", error);
+    if (!user?.id) {
+      console.info("AI generation gallery save skipped: no authenticated user.");
+      return "Image generated. Sign in to save it to your gallery.";
+    }
 
     const payload = {
-      user_id: user?.id || null,
+      user_id: user.id,
       tool_type: "image",
       prompt: request.prompt,
       style: request.style,
@@ -691,17 +761,19 @@ async function loadImageGallery(force = false) {
   try {
     const { user, error } = await getCurrentUserAndProfile();
     if (error) console.error("AI gallery auth lookup failed:", error);
+    if (!user?.id) {
+      state.galleryLoaded = true;
+      els.imageGalleryStatus.textContent = "Sign in to save and view your image history.";
+      return;
+    }
 
-    let query = supabase
+    const query = supabase
       .from("ai_generations")
       .select("id, user_id, prompt, style, aspect_ratio, provider, model, output_url, created_at")
       .eq("tool_type", "image")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(12);
-
-    query = user?.id
-      ? query.or(`user_id.eq.${user.id},user_id.is.null`)
-      : query.is("user_id", null);
 
     const { data, error: galleryError } = await query;
     if (galleryError) {
@@ -746,6 +818,195 @@ function renderImageGallery(rows) {
     card.append(image, caption, prompt);
     els.imageGalleryGrid.append(card);
   });
+}
+
+async function runPromptEnhancer(prompt, meta) {
+  if (!prompt) {
+    throw new Error("Paste a rough prompt first. The enhancer needs something to enhance.");
+  }
+
+  const mode = els.promptMode.value || "Image Prompt";
+  state.lastPromptEnhanced = "";
+  setPromptOutputActions(true);
+  const data = await callAiChat({
+    prompt: buildPromptEnhancerPrompt(prompt, meta, mode)
+  });
+
+  const reply = String(data?.text || data?.reply || "").trim();
+  if (!reply) throw new Error("ai-chat returned an empty enhanced prompt.");
+
+  state.lastPromptEnhanced = reply;
+  state.lastEnhancedPrompt = reply;
+  setPromptOutputActions();
+  return reply;
+}
+
+function buildPromptEnhancerPrompt(prompt, meta, mode) {
+  const modeInstruction = promptModeInstructions[mode] || promptModeInstructions["Image Prompt"];
+  return [
+    PROMPT_ENHANCER_SYSTEM_PROMPT,
+    modeInstruction,
+    "",
+    `Prompt mode: ${mode}`,
+    `Rough prompt:\n${prompt}`,
+    meta && `Extra direction:\n${meta}`
+  ].filter(Boolean).join("\n\n");
+}
+
+function renderPromptEnhancerResult(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "prompt-result";
+
+  const label = document.createElement("p");
+  label.className = "prompt-result-label";
+  label.textContent = "Enhanced Prompt";
+
+  const body = document.createElement("div");
+  body.className = "prompt-result-body";
+  body.textContent = text;
+
+  wrap.append(label, body);
+  els.output.replaceChildren(wrap);
+}
+
+async function copyEnhancedPrompt() {
+  const enhanced = state.lastPromptEnhanced.trim();
+  if (!enhanced) {
+    setStatus("Enhance a prompt first, then copy it. Stunning sequence of events.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(enhanced);
+    setStatus("Enhanced prompt copied.", "ok");
+  } catch (error) {
+    console.error("Enhanced prompt copy failed:", error);
+    setStatus("Copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function sendEnhancedPromptToImage() {
+  const enhanced = state.lastPromptEnhanced.trim();
+  if (!enhanced) {
+    setStatus("Enhance a prompt first, then send it somewhere.", "error");
+    return;
+  }
+
+  state.lastEnhancedPrompt = enhanced;
+  selectTool("image");
+  els.prompt.value = enhanced;
+  els.enhancedPromptPreview.textContent = enhanced;
+  els.enhancedPromptPreview.classList.add("active");
+  els.useEnhancedPrompt.disabled = false;
+  setStatus("Enhanced prompt sent to Image Generator.", "ok");
+}
+
+function sendEnhancedPromptToLore() {
+  const enhanced = state.lastPromptEnhanced.trim();
+  if (!enhanced) {
+    setStatus("Enhance a prompt first, then send it somewhere.", "error");
+    return;
+  }
+
+  selectTool("lore");
+  els.prompt.value = enhanced;
+  setStatus("Enhanced prompt sent to Lore Generator.", "ok");
+}
+
+async function runLoreGenerator(prompt, meta) {
+  if (!prompt) {
+    throw new Error("Give Lore Generator an idea first. Even legends need a seed.");
+  }
+
+  const type = els.loreType.value || "NPC";
+  const tone = els.loreTone.value || "Dark Fantasy";
+  state.lastLoreOutput = "";
+  setLoreOutputActions(true);
+
+  const data = await callAiChat({
+    prompt: buildLoreGeneratorPrompt(prompt, meta, type, tone)
+  });
+
+  const reply = String(data?.text || data?.reply || "").trim();
+  if (!reply) throw new Error("ai-chat returned empty lore.");
+
+  state.lastLoreOutput = reply;
+  setLoreOutputActions();
+  return reply;
+}
+
+function buildLoreGeneratorPrompt(prompt, meta, type, tone) {
+  return [
+    LORE_GENERATOR_SYSTEM_PROMPT,
+    "",
+    `Selected type: ${type}`,
+    `Selected tone: ${tone}`,
+    `User idea:\n${prompt}`,
+    meta && `Extra direction:\n${meta}`,
+    "Output format: Use concise sections for Name, Summary, Visual Identity, History, Conflict, Secrets, Hooks, and Game/Story Use."
+  ].filter(Boolean).join("\n\n");
+}
+
+function renderLoreResult(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "lore-result";
+
+  const label = document.createElement("p");
+  label.className = "prompt-result-label";
+  label.textContent = "Lore Output";
+
+  const body = document.createElement("div");
+  body.className = "prompt-result-body";
+  body.textContent = text;
+
+  wrap.append(label, body);
+  els.output.replaceChildren(wrap);
+}
+
+async function copyLore() {
+  const lore = state.lastLoreOutput.trim();
+  if (!lore) {
+    setStatus("Generate lore first, then copy it. Brutal, I know.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(lore);
+    setStatus("Lore copied.", "ok");
+  } catch (error) {
+    console.error("Lore copy failed:", error);
+    setStatus("Copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function sendLoreToPromptEnhancer() {
+  const lore = state.lastLoreOutput.trim();
+  if (!lore) {
+    setStatus("Generate lore first, then send it somewhere.", "error");
+    return;
+  }
+
+  selectTool("prompt");
+  els.prompt.value = lore;
+  els.promptMode.value = "Story/Lore Prompt";
+  setStatus("Lore sent to Prompt Enhancer.", "ok");
+}
+
+function sendLoreToImageGenerator() {
+  const lore = state.lastLoreOutput.trim();
+  if (!lore) {
+    setStatus("Generate lore first, then send it somewhere.", "error");
+    return;
+  }
+
+  const imagePrompt = `Create concept art based on this lore:\n\n${lore}`;
+  state.lastEnhancedPrompt = imagePrompt;
+  selectTool("image");
+  els.prompt.value = imagePrompt;
+  els.enhancedPromptPreview.textContent = imagePrompt;
+  els.enhancedPromptPreview.classList.add("active");
+  els.useEnhancedPrompt.disabled = false;
+  setStatus("Lore sent to Image Generator.", "ok");
 }
 
 async function runStructuredAiTool(tool, prompt, meta) {
@@ -844,8 +1105,6 @@ function placeholderSuggestion(id, prompt) {
     upscaler: "Upscale placeholder ready. Real provider should return original/enhanced comparison data.",
     voice: "Voice job placeholder ready. Real provider should return an audio URL and transcript.",
     music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
-    prompt: `Enhanced prompt draft: Create a precise, high-signal version of "${clean}" with constraints, style, and output format.`,
-    lore: `Lore seed: ${clean} becomes a faction, relic, or timeline entry with motive, conflict, and consequence.`,
     code: "Code helper placeholder ready. Real provider should return patch suggestions, risks, and test notes.",
     social: "Social post placeholder ready. Real provider should return short post variants."
   };
@@ -869,6 +1128,14 @@ function clearTool() {
   els.enhancedPromptPreview.classList.remove("active");
 
   if (activeTool().id === "chat") state.chatMessages = [];
+  if (activeTool().id === "prompt") {
+    state.lastPromptEnhanced = "";
+    setPromptOutputActions();
+  }
+  if (activeTool().id === "lore") {
+    state.lastLoreOutput = "";
+    setLoreOutputActions();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -885,6 +1152,12 @@ function boot() {
   els.useEnhancedPrompt.addEventListener("click", useEnhancedPrompt);
   els.generateSimilar.addEventListener("click", generateSimilarImage);
   els.copyImagePrompt.addEventListener("click", copyImagePrompt);
+  els.copyEnhancedPrompt.addEventListener("click", copyEnhancedPrompt);
+  els.sendPromptToImage.addEventListener("click", sendEnhancedPromptToImage);
+  els.sendPromptToLore.addEventListener("click", sendEnhancedPromptToLore);
+  els.copyLore.addEventListener("click", copyLore);
+  els.sendLoreToPrompt.addEventListener("click", sendLoreToPromptEnhancer);
+  els.sendLoreToImage.addEventListener("click", sendLoreToImageGenerator);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });
