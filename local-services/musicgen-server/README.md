@@ -10,9 +10,11 @@ Frontend -> Supabase Edge Function ai-music -> MUSICGEN_URL/generate
 
 ## Setup
 
+Use Python 3.11 for the local MusicGen server.
+
 ```bash
 cd local-services/musicgen-server
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -25,6 +27,8 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
+
+On an Intel/Rosetta Mac, Torch may install as `2.2.2`. If that happens, keep `transformers==4.46.3` and `numpy<2` from `requirements.txt`; newer Transformers/NumPy combinations can break that setup.
 
 ## Run
 
