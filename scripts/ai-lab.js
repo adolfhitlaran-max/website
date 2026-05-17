@@ -19,8 +19,7 @@ const tools = [
     description: "Generate real images through the ai-image Hugging Face backend.",
     prompt: "Describe the image...",
     meta: "Style and aspect ratio, like cinematic 16:9",
-    action: "Generate Image",
-    imageTool: true
+    action: "Generate Image"
   },
   {
     id: "video",
@@ -215,14 +214,15 @@ function selectTool(id) {
 
 function renderTool(tool) {
   const backendPowered = isBackendTool(tool);
-  els.kicker.textContent = tool.imageTool ? "Live Image Backend" : backendPowered ? "Live Ollama Backend" : "Mock Tool";
+  const imageGenerator = isImageGenerator(tool);
+  els.kicker.textContent = imageGenerator ? "Live Image Backend" : backendPowered ? "Live Ollama Backend" : "Prototype Tool";
   els.title.textContent = tool.title;
   els.description.textContent = tool.description;
   els.prompt.placeholder = tool.prompt;
   els.meta.placeholder = tool.meta;
   els.button.textContent = tool.action;
   els.activeToolStat.textContent = tool.title;
-  els.backendStat.textContent = tool.imageTool ? "ai-image / Hugging Face" : backendPowered ? "ai-chat / Ollama" : "mock";
+  els.backendStat.textContent = imageGenerator ? "ai-image / Hugging Face" : backendPowered ? "ai-chat / Ollama" : "prototype";
   els.output.textContent = outputIntro(tool);
   setStatus(
     backendPowered
@@ -235,11 +235,15 @@ function renderTool(tool) {
 }
 
 function isBackendTool(tool) {
-  return Boolean(tool.live || tool.aiTool || tool.imageTool);
+  return Boolean(tool.live || tool.aiTool || isImageGenerator(tool));
+}
+
+function isImageGenerator(tool) {
+  return tool.id === "image";
 }
 
 function backendStatusMessage(tool) {
-  if (tool.imageTool) return `${tool.title} is connected to the ai-image Hugging Face backend.`;
+  if (isImageGenerator(tool)) return `${tool.title} is connected to the ai-image Hugging Face backend.`;
   return `${tool.title} is connected to ai-chat and the configured Ollama backend.`;
 }
 
@@ -248,7 +252,7 @@ function outputIntro(tool) {
     return renderChatHistory() || "Ask a question and the ai-chat function will answer here.";
   }
 
-  if (tool.imageTool) {
+  if (isImageGenerator(tool)) {
     return `${tool.title} output will show up here.`;
   }
 
@@ -317,22 +321,22 @@ async function handleSubmit(event) {
 
   setLoading(true);
   setStatus(`${tool.title} is working...`);
-  if (tool.imageTool) {
+  if (tool.id === "image") {
     renderLoadingState("Generating image with Hugging Face...");
   } else {
     els.output.textContent = "Thinking. Dramatically, of course.";
   }
 
   try {
-    if (tool.id === "chat") {
-      await runChat([prompt, meta && `Context: ${meta}`].filter(Boolean).join("\n\n"));
-      return;
-    }
-
-    if (tool.imageTool) {
+    if (tool.id === "image") {
       const data = await runImageGenerator(prompt, meta);
       renderImageResult(data);
       setStatus(`${tool.title} finished through ai-image / Hugging Face.`, "ok");
+      return;
+    }
+
+    if (tool.id === "chat") {
+      await runChat([prompt, meta && `Context: ${meta}`].filter(Boolean).join("\n\n"));
       return;
     }
 
@@ -343,9 +347,9 @@ async function handleSubmit(event) {
       return;
     }
 
-    const text = await runMockTool(tool, prompt, meta);
+    const text = await runUnfinishedToolPlaceholder(tool, prompt, meta);
     els.output.textContent = text;
-    setStatus(`${tool.title} mock output ready. Provider wiring can come next.`, "ok");
+    setStatus(`${tool.title} placeholder ready. Provider wiring can come next.`, "ok");
   } catch (error) {
     console.error(`${tool.title} failed:`, error);
     els.output.textContent = error.message || "The tool fell over. Very elegant.";
@@ -537,11 +541,7 @@ async function callAiChat(payload) {
   return data;
 }
 
-function runMockTool(tool, prompt, meta) {
-  if (tool.imageTool || tool.id === "image") {
-    return Promise.reject(new Error("Image Generator must use ai-image. Mock image generation is disabled."));
-  }
-
+function runUnfinishedToolPlaceholder(tool, prompt, meta) {
   return new Promise((resolve) => {
     window.setTimeout(() => {
       resolve([
@@ -551,13 +551,13 @@ function runMockTool(tool, prompt, meta) {
         `Details: ${meta || "No extra details."}`,
         `Uploads: ${fileSummary()}`,
         "",
-        mockSuggestion(tool.id, prompt)
+        placeholderSuggestion(tool.id, prompt)
       ].join("\n"));
     }, 700);
   });
 }
 
-function mockSuggestion(id, prompt) {
+function placeholderSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
@@ -572,7 +572,7 @@ function mockSuggestion(id, prompt) {
     social: "Social post placeholder ready. Real provider should return short post variants."
   };
 
-  return suggestions[id] || "Mock output ready.";
+  return suggestions[id] || "Placeholder output ready.";
 }
 
 function renderChatHistory() {
