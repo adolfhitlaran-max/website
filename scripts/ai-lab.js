@@ -87,7 +87,8 @@ const tools = [
     description: "Turn rough prompts into cleaner, more controllable prompts for other AI tools.",
     prompt: "Paste the messy prompt...",
     meta: "Target model or output format",
-    action: "Enhance Prompt"
+    action: "Enhance Prompt",
+    aiTool: "prompt"
   },
   {
     id: "lore",
@@ -96,7 +97,8 @@ const tools = [
     description: "Generate worldbuilding notes, factions, artifacts, timelines, and strange little backstory piles.",
     prompt: "Describe the world, character, faction, or artifact...",
     meta: "Tone, era, genre",
-    action: "Generate Lore"
+    action: "Generate Lore",
+    aiTool: "lore"
   },
   {
     id: "code",
@@ -106,9 +108,55 @@ const tools = [
     prompt: "Describe the bug or feature...",
     meta: "Language, framework, file path",
     action: "Help With Code",
+    aiTool: "code",
     upload: { accept: ".txt,.js,.ts,.html,.css,.json,.md", multiple: true }
+  },
+  {
+    id: "social",
+    title: "Social Post Generator",
+    icon: "SO",
+    description: "Create short X/Twitter-style posts with hooks, punch, and no corporate beige fog.",
+    prompt: "What should the post say or promote?",
+    meta: "Tone, audience, number of variants",
+    action: "Generate Posts",
+    aiTool: "social"
   }
 ];
+
+const aiToolPrompts = {
+  prompt: {
+    system: [
+      "You are an expert prompt engineer.",
+      "Rewrite rough prompts into stronger, detailed prompts with clear subject, context, style, constraints, and output format.",
+      "Return only the improved prompt unless the user asks for notes.",
+      "Keep it useful, specific, and ready to paste into another AI tool."
+    ].join(" ")
+  },
+  lore: {
+    system: [
+      "You are a game lore writer and worldbuilding designer.",
+      "Generate factions, NPCs, quests, myths, locations, conflicts, artifacts, and history from the user's idea.",
+      "Use clean sections and concrete names.",
+      "Make it playable, weird enough to remember, and easy to adapt."
+    ].join(" ")
+  },
+  code: {
+    system: [
+      "You are a senior code helper.",
+      "Explain or fix pasted code with direct, practical guidance.",
+      "If code is broken, identify likely causes, suggest a corrected version, and mention any test or debugging step.",
+      "Do not pretend to run code. Be concise unless the pasted code requires detail."
+    ].join(" ")
+  },
+  social: {
+    system: [
+      "You write short X/Twitter-style posts.",
+      "Create punchy posts with strong hooks, concise wording, and optional hashtags only when useful.",
+      "Avoid long threads unless requested.",
+      "Default to 5 variants, each under 280 characters."
+    ].join(" ")
+  }
+};
 
 const state = {
   activeId: tools[0].id,
@@ -165,18 +213,40 @@ function selectTool(id) {
 }
 
 function renderTool(tool) {
-  els.kicker.textContent = tool.live ? "Live Backend" : "Mock Tool";
+  const backendPowered = isBackendTool(tool);
+  els.kicker.textContent = backendPowered ? "Live Ollama Backend" : "Mock Tool";
   els.title.textContent = tool.title;
   els.description.textContent = tool.description;
   els.prompt.placeholder = tool.prompt;
   els.meta.placeholder = tool.meta;
   els.button.textContent = tool.action;
   els.activeToolStat.textContent = tool.title;
-  els.backendStat.textContent = tool.live ? "ai-chat" : "mock";
-  els.output.textContent = tool.live ? renderChatHistory() || "Ask a question and the ai-chat function will answer here." : "Output will show up here.";
-  setStatus(tool.live ? "Chat AI is connected to the ai-chat backend." : "Provider not wired yet. This tool returns a clean mock response.", tool.live ? "ok" : "");
+  els.backendStat.textContent = backendPowered ? "ai-chat / Ollama" : "mock";
+  els.output.textContent = outputIntro(tool);
+  setStatus(
+    backendPowered
+      ? `${tool.title} is connected to ai-chat and the configured Ollama backend.`
+      : "Provider not wired yet. This tool returns a clean mock response.",
+    backendPowered ? "ok" : ""
+  );
   setUpload(tool);
   setLoading(false);
+}
+
+function isBackendTool(tool) {
+  return Boolean(tool.live || tool.aiTool);
+}
+
+function outputIntro(tool) {
+  if (tool.id === "chat") {
+    return renderChatHistory() || "Ask a question and the ai-chat function will answer here.";
+  }
+
+  if (tool.aiTool) {
+    return `${tool.title} output will show up here.`;
+  }
+
+  return "Output will show up here.";
 }
 
 function setUpload(tool) {
@@ -245,6 +315,13 @@ async function handleSubmit(event) {
       return;
     }
 
+    if (tool.aiTool) {
+      const text = await runStructuredAiTool(tool, prompt, meta);
+      els.output.textContent = text;
+      setStatus(`${tool.title} finished through ai-chat / Ollama.`, "ok");
+      return;
+    }
+
     const text = await runMockTool(tool, prompt, meta);
     els.output.textContent = text;
     setStatus(`${tool.title} mock output ready. Provider wiring can come next.`, "ok");
@@ -264,14 +341,66 @@ async function runChat(prompt) {
 
   state.chatMessages = [...state.chatMessages, { role: "user", content: prompt }].slice(-8);
 
+  const data = await callAiChat({
+    messages: state.chatMessages.slice(-6)
+  });
+
+  const reply = String(data?.text || data?.reply || "").trim();
+  if (!reply) throw new Error("ai-chat returned an empty response.");
+
+  state.chatMessages = [...state.chatMessages, { role: "assistant", content: reply }].slice(-8);
+  els.output.textContent = renderChatHistory();
+  setStatus(`Chat AI replied through ${data?.provider || "ai-chat"}${data?.model ? ` (${data.model})` : ""}.`, "ok");
+}
+
+async function runStructuredAiTool(tool, prompt, meta) {
+  if (!prompt) {
+    throw new Error(`Feed ${tool.title} a prompt first. It is powerful, not psychic.`);
+  }
+
+  const config = aiToolPrompts[tool.aiTool];
+  if (!config) {
+    throw new Error(`${tool.title} is missing its system prompt.`);
+  }
+
+  const data = await callAiChat({
+    messages: buildStructuredMessages(config.system, prompt, meta, fileSummary())
+  });
+
+  const reply = String(data?.text || data?.reply || "").trim();
+  if (!reply) throw new Error("ai-chat returned an empty response.");
+
+  return [
+    reply,
+    "",
+    `Provider: ${data?.provider || "ai-chat"}${data?.model ? ` (${data.model})` : ""}`
+  ].join("\n");
+}
+
+function buildStructuredMessages(systemPrompt, prompt, meta, uploads) {
+  return [
+    {
+      role: "system",
+      content: systemPrompt
+    },
+    {
+      role: "user",
+      content: [
+        `User input:\n${prompt}`,
+        meta && `Extra direction:\n${meta}`,
+        uploads && uploads !== "No file uploaded." && `Uploaded files:\n${uploads}\n\nNote: uploaded file contents are not available yet, so use only the filenames as context.`
+      ].filter(Boolean).join("\n\n")
+    }
+  ];
+}
+
+async function callAiChat(payload) {
   const response = await fetch(AI_CHAT_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      messages: state.chatMessages.slice(-6)
-    })
+    body: JSON.stringify(payload)
   });
 
   const responseText = await response.text();
@@ -292,12 +421,7 @@ async function runChat(prompt) {
     throw new Error(data?.details || data?.error || `ai-chat returned ${response.status}.`);
   }
 
-  const reply = String(data?.text || data?.reply || "").trim();
-  if (!reply) throw new Error("ai-chat returned an empty response.");
-
-  state.chatMessages = [...state.chatMessages, { role: "assistant", content: reply }].slice(-8);
-  els.output.textContent = renderChatHistory();
-  setStatus(`Chat AI replied through ${data?.provider || "ai-chat"}${data?.model ? ` (${data.model})` : ""}.`, "ok");
+  return data;
 }
 
 function runMockTool(tool, prompt, meta) {
@@ -328,7 +452,8 @@ function mockSuggestion(id, prompt) {
     music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
     prompt: `Enhanced prompt draft: Create a precise, high-signal version of "${clean}" with constraints, style, and output format.`,
     lore: `Lore seed: ${clean} becomes a faction, relic, or timeline entry with motive, conflict, and consequence.`,
-    code: "Code helper placeholder ready. Real provider should return patch suggestions, risks, and test notes."
+    code: "Code helper placeholder ready. Real provider should return patch suggestions, risks, and test notes.",
+    social: "Social post placeholder ready. Real provider should return short post variants."
   };
 
   return suggestions[id] || "Mock output ready.";

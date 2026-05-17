@@ -15,3 +15,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/ai-chat/deno.json"
 entrypoint = "./functions/ai-chat/index.ts"
+
+[functions.ai-image]
+enabled = true
+verify_jwt = false
+import_map = "./functions/ai-image/deno.json"
+entrypoint = "./functions/ai-image/index.ts"
