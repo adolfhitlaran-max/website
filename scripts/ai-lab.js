@@ -73,10 +73,10 @@ const tools = [
     id: "voice",
     title: "Voice AI",
     icon: "VO",
-    description: "Record speech in your browser and transcribe it locally with the Web Speech API.",
+    description: "Transcribe speech or read text out loud with browser speech tools.",
     prompt: "Transcript notes or what you want to do with it...",
     meta: "Optional context",
-    action: "Show Transcript",
+    action: "Use Voice Text",
     browserTool: "web-speech"
   },
   {
@@ -184,6 +184,10 @@ const state = {
   isRecordingVoice: false,
   lastVoiceTranscript: "",
   voiceInterimTranscript: "",
+  voiceMode: "stt",
+  speechSynthesisVoices: [],
+  currentSpeechUtterance: null,
+  lastSpeechText: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -246,9 +250,24 @@ const els = {
   upscalerOutputActions: document.getElementById("upscalerOutputActions"),
   downloadUpscaledPng: document.getElementById("downloadUpscaledPngButton"),
   voiceControls: document.getElementById("voiceControls"),
+  voiceModeButtons: [...document.querySelectorAll("[data-voice-mode]")],
+  voiceSttPanel: document.getElementById("voiceSttPanel"),
+  voiceTtsPanel: document.getElementById("voiceTtsPanel"),
   startVoiceRecording: document.getElementById("startVoiceRecordingButton"),
   stopVoiceRecording: document.getElementById("stopVoiceRecordingButton"),
   liveVoiceTranscript: document.getElementById("liveVoiceTranscript"),
+  ttsText: document.getElementById("ttsText"),
+  ttsVoice: document.getElementById("ttsVoice"),
+  ttsRate: document.getElementById("ttsRate"),
+  ttsPitch: document.getElementById("ttsPitch"),
+  ttsVolume: document.getElementById("ttsVolume"),
+  ttsRateValue: document.getElementById("ttsRateValue"),
+  ttsPitchValue: document.getElementById("ttsPitchValue"),
+  ttsVolumeValue: document.getElementById("ttsVolumeValue"),
+  speakText: document.getElementById("speakTextButton"),
+  stopSpeech: document.getElementById("stopSpeechButton"),
+  pauseSpeech: document.getElementById("pauseSpeechButton"),
+  resumeSpeech: document.getElementById("resumeSpeechButton"),
   voiceOutputActions: document.getElementById("voiceOutputActions"),
   copyVoiceTranscript: document.getElementById("copyVoiceTranscriptButton"),
   sendVoiceToChat: document.getElementById("sendVoiceToChatButton"),
@@ -288,6 +307,7 @@ function renderTabs() {
 function selectTool(id) {
   if (state.activeId === "voice" && id !== "voice") {
     stopExistingSpeechRecognition();
+    stopSpeechSynthesis();
   }
   state.activeId = id;
   const tool = activeTool();
@@ -379,7 +399,7 @@ function backendStatusMessage(tool) {
   if (tool.browserTool === "tesseract") return "OCR is powered by Tesseract.js locally in your browser. No image upload or API key needed.";
   if (tool.browserTool === "background-removal") return "Browser background removal runs locally and exports a transparent PNG. No Supabase upload or API key needed.";
   if (tool.browserTool === "canvas-upscaler") return "Browser Canvas upscales images locally with smoothing and optional sharpening. No Supabase upload or API key needed.";
-  if (tool.browserTool === "web-speech") return "Web Speech API transcribes speech in supported browsers. No Supabase upload or API key needed.";
+  if (tool.browserTool === "web-speech") return "Web Speech API + SpeechSynthesis run in supported browsers. No Supabase upload or API key needed.";
   if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
   if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
   if (tool.id === "code") return "Code Helper is connected to ai-chat / Ollama.";
@@ -409,7 +429,9 @@ function outputIntro(tool) {
   }
 
   if (isVoiceTool(tool)) {
-    return "Click Start Recording, speak, then stop when you are done. Transcript shows up here.";
+    return state.voiceMode === "tts"
+      ? "Type text, choose a browser voice, then click Speak. Spoken text shows up here."
+      : "Click Start Recording, speak, then stop when you are done. Transcript shows up here.";
   }
 
   if (tool.aiTool) {
@@ -526,6 +548,11 @@ function setVoiceControls(tool) {
   const active = isVoiceTool(tool);
   els.voiceControls.classList.toggle("active", active);
   els.voiceOutputActions.classList.toggle("active", active);
+  if (active) {
+    updateVoiceModeUi();
+    populateSpeechSynthesisVoices();
+    setTextToSpeechControls();
+  }
   setVoiceRecordingState();
   setVoiceOutputActions();
 }
@@ -543,11 +570,22 @@ function setVoiceRecordingState() {
 }
 
 function setVoiceOutputActions(isLoading = false) {
-  const disabled = isLoading || !state.lastVoiceTranscript.trim();
+  const disabled = isLoading || !getActiveVoiceText().trim();
   els.copyVoiceTranscript.disabled = disabled;
   els.sendVoiceToChat.disabled = disabled;
   els.sendVoiceToPrompt.disabled = disabled;
   els.downloadVoiceTranscript.disabled = disabled;
+}
+
+function setTextToSpeechControls() {
+  const supported = isSpeechSynthesisSupported();
+  const speaking = supported && window.speechSynthesis.speaking;
+  const paused = supported && window.speechSynthesis.paused;
+  els.speakText.disabled = false;
+  els.stopSpeech.disabled = !speaking;
+  els.pauseSpeech.disabled = !speaking || paused;
+  els.resumeSpeech.disabled = !paused;
+  updateTtsSliderLabels();
 }
 
 function setStatus(message, type = "") {
@@ -566,6 +604,7 @@ function setLoading(isLoading) {
   if (activeTool().id === "background") setBackgroundOutputActions(isLoading);
   if (activeTool().id === "upscaler") setUpscalerOutputActions(isLoading);
   if (activeTool().id === "voice") setVoiceOutputActions(isLoading);
+  if (activeTool().id === "voice") setTextToSpeechControls();
 }
 
 function selectedFiles() {
@@ -608,20 +647,7 @@ async function handleSubmit(event) {
   }
 
   if (tool.id === "voice") {
-    if (state.isRecordingVoice) {
-      setStatus("Stop recording first, then use the transcript.", "error");
-      return;
-    }
-    if (!getSpeechRecognitionConstructor()) {
-      showVoiceUnsupportedError();
-      return;
-    }
-    if (!state.lastVoiceTranscript.trim()) {
-      setStatus("Click Start Recording first. The browser cannot transcribe silence on vibes alone.", "error");
-      return;
-    }
-    renderVoiceTranscriptResult();
-    setStatus("Voice transcript ready.", "ok");
+    handleVoiceSubmit();
     return;
   }
 
@@ -1536,6 +1562,67 @@ function clearUpscalerResultUrls() {
   state.lastUpscalerOriginalUrl = "";
 }
 
+function setVoiceMode(mode) {
+  state.voiceMode = mode === "tts" ? "tts" : "stt";
+  if (state.voiceMode === "tts") {
+    stopExistingSpeechRecognition();
+    populateSpeechSynthesisVoices();
+  } else {
+    stopSpeechSynthesis();
+  }
+
+  updateVoiceModeUi();
+  setVoiceRecordingState();
+  setTextToSpeechControls();
+  setVoiceOutputActions();
+  els.output.textContent = outputIntro(activeTool());
+  setStatus(backendStatusMessage(activeTool()), "ok");
+}
+
+function updateVoiceModeUi() {
+  els.voiceModeButtons.forEach((button) => {
+    const active = button.dataset.voiceMode === state.voiceMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  els.voiceSttPanel.classList.toggle("active", state.voiceMode === "stt");
+  els.voiceTtsPanel.classList.toggle("active", state.voiceMode === "tts");
+}
+
+function handleVoiceSubmit() {
+  if (state.voiceMode === "tts") {
+    speakTextToSpeech();
+    return;
+  }
+
+  if (state.isRecordingVoice) {
+    setStatus("Stop recording first, then use the transcript.", "error");
+    return;
+  }
+  if (!getSpeechRecognitionConstructor()) {
+    showVoiceUnsupportedError();
+    return;
+  }
+  if (!state.lastVoiceTranscript.trim()) {
+    setStatus("Click Start Recording first. The browser cannot transcribe silence on vibes alone.", "error");
+    return;
+  }
+  renderVoiceTranscriptResult();
+  setStatus("Voice transcript ready.", "ok");
+}
+
+function getActiveVoiceText() {
+  if (state.voiceMode === "tts") {
+    return String(els.ttsText.value || state.lastSpeechText || "").trim();
+  }
+
+  return state.lastVoiceTranscript.trim();
+}
+
+function activeVoiceTextLabel() {
+  return state.voiceMode === "tts" ? "text-to-speech text" : "voice transcript";
+}
+
 function getSpeechRecognitionConstructor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition;
 }
@@ -1684,50 +1771,50 @@ function renderVoiceTranscriptResult() {
 }
 
 async function copyVoiceTranscript() {
-  const text = state.lastVoiceTranscript.trim();
+  const text = getActiveVoiceText();
   if (!text) {
-    setStatus("Record a transcript before copying it.", "error");
+    setStatus(`Add ${activeVoiceTextLabel()} before copying it.`, "error");
     return;
   }
 
   try {
     await navigator.clipboard.writeText(text);
-    setStatus("Voice transcript copied.", "ok");
+    setStatus("Voice text copied.", "ok");
   } catch (error) {
-    console.error("Voice transcript copy failed:", error);
+    console.error("Voice text copy failed:", error);
     setStatus("Copy failed. Your browser blocked clipboard access.", "error");
   }
 }
 
 function sendVoiceTranscriptToChatAi() {
-  const text = state.lastVoiceTranscript.trim();
+  const text = getActiveVoiceText();
   if (!text) {
-    setStatus("Record a transcript before sending it somewhere.", "error");
+    setStatus(`Add ${activeVoiceTextLabel()} before sending it somewhere.`, "error");
     return;
   }
 
   selectTool("chat");
-  els.prompt.value = `Help me with this voice transcript:\n\n${text}`;
-  setStatus("Voice transcript sent to Chat AI.", "ok");
+  els.prompt.value = `Help me with this voice text:\n\n${text}`;
+  setStatus("Voice text sent to Chat AI.", "ok");
 }
 
 function sendVoiceTranscriptToPromptEnhancer() {
-  const text = state.lastVoiceTranscript.trim();
+  const text = getActiveVoiceText();
   if (!text) {
-    setStatus("Record a transcript before sending it somewhere.", "error");
+    setStatus(`Add ${activeVoiceTextLabel()} before sending it somewhere.`, "error");
     return;
   }
 
   selectTool("prompt");
   els.prompt.value = text;
   els.promptMode.value = "Story/Lore Prompt";
-  setStatus("Voice transcript sent to Prompt Enhancer.", "ok");
+  setStatus("Voice text sent to Prompt Enhancer.", "ok");
 }
 
 function downloadVoiceTranscript() {
-  const text = state.lastVoiceTranscript.trim();
+  const text = getActiveVoiceText();
   if (!text) {
-    setStatus("Record a transcript before downloading it.", "error");
+    setStatus(`Add ${activeVoiceTextLabel()} before downloading it.`, "error");
     return;
   }
 
@@ -1735,12 +1822,182 @@ function downloadVoiceTranscript() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "uncensored-media-voice-transcript.txt";
+  link.download = state.voiceMode === "tts"
+    ? "uncensored-media-text-to-speech.txt"
+    : "uncensored-media-voice-transcript.txt";
   document.body.append(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  setStatus("Voice transcript downloaded.", "ok");
+  setStatus("Voice text downloaded.", "ok");
+}
+
+function isSpeechSynthesisSupported() {
+  return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+}
+
+function populateSpeechSynthesisVoices() {
+  if (!isSpeechSynthesisSupported()) {
+    els.ttsVoice.replaceChildren(new Option("SpeechSynthesis unavailable", ""));
+    return;
+  }
+
+  const previousValue = els.ttsVoice.value;
+  const voices = window.speechSynthesis.getVoices();
+  state.speechSynthesisVoices = voices;
+  els.ttsVoice.replaceChildren();
+
+  const defaultOption = new Option("Default browser voice", "");
+  els.ttsVoice.append(defaultOption);
+
+  voices.forEach((voice) => {
+    const label = `${voice.name}${voice.lang ? ` (${voice.lang})` : ""}${voice.default ? " - default" : ""}`;
+    const option = new Option(label, voice.voiceURI);
+    els.ttsVoice.append(option);
+  });
+
+  if (previousValue && [...els.ttsVoice.options].some((option) => option.value === previousValue)) {
+    els.ttsVoice.value = previousValue;
+  }
+}
+
+function selectedSpeechSynthesisVoice() {
+  const selected = els.ttsVoice.value;
+  if (!selected) return null;
+  return state.speechSynthesisVoices.find((voice) => voice.voiceURI === selected) || null;
+}
+
+function speakTextToSpeech() {
+  if (!isSpeechSynthesisSupported()) {
+    showTtsUnsupportedError();
+    return;
+  }
+
+  const text = els.ttsText.value.trim();
+  if (!text) {
+    setStatus("Type text before asking the browser to read it.", "error");
+    return;
+  }
+
+  stopSpeechSynthesis(false);
+  populateSpeechSynthesisVoices();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = selectedSpeechSynthesisVoice();
+  if (voice) utterance.voice = voice;
+  utterance.rate = Number(els.ttsRate.value || 1);
+  utterance.pitch = Number(els.ttsPitch.value || 1);
+  utterance.volume = Number(els.ttsVolume.value || 1);
+
+  utterance.onstart = () => {
+    state.currentSpeechUtterance = utterance;
+    state.lastSpeechText = text;
+    renderTextToSpeechResult("Speaking");
+    setVoiceOutputActions();
+    setTextToSpeechControls();
+    setStatus("Reading text with SpeechSynthesis...", "ok");
+  };
+
+  utterance.onend = () => {
+    state.currentSpeechUtterance = null;
+    state.lastSpeechText = text;
+    renderTextToSpeechResult("Finished");
+    setVoiceOutputActions();
+    setTextToSpeechControls();
+    setStatus("Text-to-speech finished.", "ok");
+  };
+
+  utterance.onerror = (event) => {
+    console.error("Text-to-speech failed:", event);
+    state.currentSpeechUtterance = null;
+    setTextToSpeechControls();
+    const detail = event?.error ? ` ${event.error}` : "";
+    els.output.textContent = `Text-to-speech failed.${detail}`;
+    setStatus(`Text-to-speech failed.${detail}`, "error");
+  };
+
+  state.lastSpeechText = text;
+  renderTextToSpeechResult("Queued");
+  setVoiceOutputActions();
+  window.speechSynthesis.speak(utterance);
+  window.setTimeout(setTextToSpeechControls, 50);
+}
+
+function stopSpeechSynthesis(showStatus = true) {
+  if (!isSpeechSynthesisSupported()) return;
+  if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+    window.speechSynthesis.cancel();
+  }
+  state.currentSpeechUtterance = null;
+  setTextToSpeechControls();
+  if (showStatus) setStatus("Speech stopped.", "ok");
+}
+
+function pauseSpeechSynthesis() {
+  if (!isSpeechSynthesisSupported()) {
+    showTtsUnsupportedError();
+    return;
+  }
+  if (!window.speechSynthesis.speaking) {
+    setStatus("Nothing is speaking right now.", "error");
+    return;
+  }
+  window.speechSynthesis.pause();
+  setTextToSpeechControls();
+  setStatus("Speech paused.", "ok");
+}
+
+function resumeSpeechSynthesis() {
+  if (!isSpeechSynthesisSupported()) {
+    showTtsUnsupportedError();
+    return;
+  }
+  if (!window.speechSynthesis.paused) {
+    setStatus("Speech is not paused.", "error");
+    return;
+  }
+  window.speechSynthesis.resume();
+  setTextToSpeechControls();
+  setStatus("Speech resumed.", "ok");
+}
+
+function showTtsUnsupportedError() {
+  const message = "Text-to-speech is not supported in this browser. Try Chrome.";
+  els.output.textContent = message;
+  setStatus(message, "error");
+}
+
+function updateTtsSliderLabels() {
+  els.ttsRateValue.textContent = `${Number(els.ttsRate.value || 1).toFixed(1)}x`;
+  els.ttsPitchValue.textContent = Number(els.ttsPitch.value || 1).toFixed(1);
+  els.ttsVolumeValue.textContent = `${Math.round(Number(els.ttsVolume.value || 1) * 100)}%`;
+}
+
+function renderTextToSpeechResult(status = "Ready") {
+  const text = els.ttsText.value.trim() || state.lastSpeechText.trim();
+  const wrap = document.createElement("div");
+  wrap.className = "voice-result";
+
+  const label = document.createElement("p");
+  label.className = "prompt-result-label";
+  label.textContent = `Text-to-Speech: ${status}`;
+
+  const body = document.createElement("div");
+  body.className = "prompt-result-body";
+  body.textContent = text || "No text entered yet.";
+
+  const meta = document.createElement("p");
+  meta.className = "image-result-meta";
+  const voice = selectedSpeechSynthesisVoice();
+  meta.textContent = [
+    voice ? `Voice: ${voice.name}` : "Voice: browser default",
+    `Rate: ${Number(els.ttsRate.value || 1).toFixed(1)}x`,
+    `Pitch: ${Number(els.ttsPitch.value || 1).toFixed(1)}`,
+    `Volume: ${Math.round(Number(els.ttsVolume.value || 1) * 100)}%`
+  ].join(" | ");
+
+  wrap.append(label, body, meta);
+  els.output.replaceChildren(wrap);
 }
 
 async function runPromptEnhancer(prompt, meta) {
@@ -2273,11 +2530,15 @@ function clearTool() {
   }
   if (activeTool().id === "voice") {
     stopExistingSpeechRecognition();
+    stopSpeechSynthesis(false);
     state.lastVoiceTranscript = "";
     state.voiceInterimTranscript = "";
+    state.lastSpeechText = "";
+    els.ttsText.value = "";
     els.liveVoiceTranscript.textContent = "Microphone transcript will appear here while you speak.";
     setVoiceOutputActions();
     setVoiceRecordingState();
+    setTextToSpeechControls();
   }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
@@ -2313,10 +2574,33 @@ function boot() {
   els.downloadUpscaledPng.addEventListener("click", downloadUpscaledPng);
   els.startVoiceRecording.addEventListener("click", startVoiceRecording);
   els.stopVoiceRecording.addEventListener("click", stopVoiceRecording);
+  els.voiceModeButtons.forEach((button) => {
+    button.addEventListener("click", () => setVoiceMode(button.dataset.voiceMode));
+  });
+  els.speakText.addEventListener("click", speakTextToSpeech);
+  els.stopSpeech.addEventListener("click", () => stopSpeechSynthesis());
+  els.pauseSpeech.addEventListener("click", pauseSpeechSynthesis);
+  els.resumeSpeech.addEventListener("click", resumeSpeechSynthesis);
+  els.ttsText.addEventListener("input", () => {
+    state.lastSpeechText = els.ttsText.value.trim();
+    if (state.voiceMode === "tts") {
+      setVoiceOutputActions();
+    }
+  });
+  [els.ttsRate, els.ttsPitch, els.ttsVolume].forEach((slider) => {
+    slider.addEventListener("input", updateTtsSliderLabels);
+  });
+  els.ttsVoice.addEventListener("change", () => {
+    if (state.voiceMode === "tts") renderTextToSpeechResult("Ready");
+  });
   els.copyVoiceTranscript.addEventListener("click", copyVoiceTranscript);
   els.sendVoiceToChat.addEventListener("click", sendVoiceTranscriptToChatAi);
   els.sendVoiceToPrompt.addEventListener("click", sendVoiceTranscriptToPromptEnhancer);
   els.downloadVoiceTranscript.addEventListener("click", downloadVoiceTranscript);
+  if (isSpeechSynthesisSupported()) {
+    populateSpeechSynthesisVoices();
+    window.speechSynthesis.onvoiceschanged = populateSpeechSynthesisVoices;
+  }
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });

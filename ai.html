@@ -402,6 +402,7 @@
     .lore-controls-grid,
     .code-controls-grid,
     .voice-controls-grid,
+    .tts-controls-grid,
     .upscaler-controls-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
@@ -563,6 +564,48 @@
       color: rgba(245, 239, 226, 0.9);
       line-height: 1.5;
       white-space: pre-wrap;
+    }
+
+    .voice-mode-switch,
+    .tts-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+    }
+
+    .voice-mode-switch button.active {
+      border-color: rgba(0, 213, 255, 0.55);
+      background: rgba(0, 213, 255, 0.12);
+      color: white;
+    }
+
+    .voice-panel {
+      display: none;
+      gap: 0.85rem;
+    }
+
+    .voice-panel.active {
+      display: grid;
+    }
+
+    .tts-textarea {
+      min-height: 8rem;
+    }
+
+    .range-field input[type="range"] {
+      width: 100%;
+      accent-color: var(--cyan);
+    }
+
+    .range-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.7rem;
+    }
+
+    .range-label output {
+      color: var(--cyan);
+      font-weight: 950;
     }
 
     .transparent-preview {
@@ -1063,11 +1106,51 @@
             </div>
 
             <div id="voiceControls" class="voice-controls">
-              <div class="voice-controls-grid">
-                <button id="startVoiceRecordingButton" type="button">Start Recording</button>
-                <button id="stopVoiceRecordingButton" type="button" disabled>Stop Recording</button>
+              <div class="voice-mode-switch" role="tablist" aria-label="Voice AI modes">
+                <button type="button" class="active" data-voice-mode="stt" aria-selected="true">Speech-to-Text</button>
+                <button type="button" data-voice-mode="tts" aria-selected="false">Text-to-Speech</button>
               </div>
-              <div id="liveVoiceTranscript" class="live-transcript" aria-live="polite">Microphone transcript will appear here while you speak.</div>
+
+              <div id="voiceSttPanel" class="voice-panel active">
+                <div class="voice-controls-grid">
+                  <button id="startVoiceRecordingButton" type="button">Start Recording</button>
+                  <button id="stopVoiceRecordingButton" type="button" disabled>Stop Recording</button>
+                </div>
+                <div id="liveVoiceTranscript" class="live-transcript" aria-live="polite">Microphone transcript will appear here while you speak.</div>
+              </div>
+
+              <div id="voiceTtsPanel" class="voice-panel">
+                <label>
+                  Text to Speak
+                  <textarea id="ttsText" class="tts-textarea" placeholder="Type text for the browser to read out loud..."></textarea>
+                </label>
+                <div class="tts-controls-grid">
+                  <label>
+                    Voice
+                    <select id="ttsVoice" name="ttsVoice">
+                      <option value="">Default browser voice</option>
+                    </select>
+                  </label>
+                  <label class="range-field">
+                    <span class="range-label">Rate <output id="ttsRateValue">1.0x</output></span>
+                    <input id="ttsRate" type="range" min="0.5" max="2" step="0.1" value="1" />
+                  </label>
+                  <label class="range-field">
+                    <span class="range-label">Pitch <output id="ttsPitchValue">1.0</output></span>
+                    <input id="ttsPitch" type="range" min="0" max="2" step="0.1" value="1" />
+                  </label>
+                  <label class="range-field">
+                    <span class="range-label">Volume <output id="ttsVolumeValue">100%</output></span>
+                    <input id="ttsVolume" type="range" min="0" max="1" step="0.05" value="1" />
+                  </label>
+                </div>
+                <div class="tts-actions">
+                  <button id="speakTextButton" type="button">Speak</button>
+                  <button id="stopSpeechButton" type="button" disabled>Stop</button>
+                  <button id="pauseSpeechButton" type="button" disabled>Pause</button>
+                  <button id="resumeSpeechButton" type="button" disabled>Resume</button>
+                </div>
+              </div>
             </div>
 
             <div id="upscalerControls" class="upscaler-controls">
@@ -1140,9 +1223,9 @@
           </div>
 
           <div id="voiceOutputActions" class="voice-output-actions">
-            <button id="copyVoiceTranscriptButton" type="button" disabled>Copy Transcript</button>
-            <button id="sendVoiceToChatButton" type="button" disabled>Send to Chat AI</button>
-            <button id="sendVoiceToPromptButton" type="button" disabled>Send to Prompt Enhancer</button>
+            <button id="copyVoiceTranscriptButton" type="button" disabled>Copy Text</button>
+            <button id="sendVoiceToChatButton" type="button" disabled>Send Text to Chat AI</button>
+            <button id="sendVoiceToPromptButton" type="button" disabled>Send Text to Prompt Enhancer</button>
             <button id="downloadVoiceTranscriptButton" type="button" disabled>Download .txt</button>
           </div>
 
@@ -1161,6 +1244,6 @@
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="scripts/ai-lab.js?v=voice-ai-live-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=voice-ai-tts-live-20260517"></script>
 </body>
 </html>
