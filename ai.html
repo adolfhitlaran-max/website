@@ -358,7 +358,8 @@
 
     .image-controls,
     .prompt-controls,
-    .lore-controls {
+    .lore-controls,
+    .code-controls {
       display: none;
       gap: 0.85rem;
       border: 1px solid rgba(245, 239, 226, 0.14);
@@ -369,13 +370,15 @@
 
     .image-controls.active,
     .prompt-controls.active,
-    .lore-controls.active {
+    .lore-controls.active,
+    .code-controls.active {
       display: grid;
     }
 
     .image-controls-grid,
     .prompt-controls-grid,
-    .lore-controls-grid {
+    .lore-controls-grid,
+    .code-controls-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
       gap: 0.75rem;
@@ -387,26 +390,30 @@
 
     .image-tool-actions,
     .prompt-output-actions,
-    .lore-output-actions {
+    .lore-output-actions,
+    .code-output-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 0.65rem;
     }
 
     .prompt-output-actions,
-    .lore-output-actions {
+    .lore-output-actions,
+    .code-output-actions {
       display: none;
       margin-top: 0.85rem;
     }
 
     .prompt-output-actions.active,
-    .lore-output-actions.active {
+    .lore-output-actions.active,
+    .code-output-actions.active {
       display: flex;
     }
 
     .image-tool-actions button,
     .prompt-output-actions button,
-    .lore-output-actions button {
+    .lore-output-actions button,
+    .code-output-actions button {
       min-height: 2.7rem;
       border: 1px solid rgba(245, 239, 226, 0.16);
       border-radius: 999px;
@@ -419,7 +426,8 @@
 
     .image-tool-actions button:disabled,
     .prompt-output-actions button:disabled,
-    .lore-output-actions button:disabled {
+    .lore-output-actions button:disabled,
+    .code-output-actions button:disabled {
       cursor: not-allowed;
       opacity: 0.48;
     }
@@ -438,7 +446,8 @@
     }
 
     .prompt-result,
-    .lore-result {
+    .lore-result,
+    .code-result {
       display: grid;
       gap: 0.7rem;
     }
@@ -458,6 +467,12 @@
       background: rgba(0, 213, 255, 0.07);
       color: rgba(245, 239, 226, 0.9);
       white-space: pre-wrap;
+    }
+
+    .code-result-body {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.9rem;
+      line-height: 1.55;
     }
 
     .upload-row {
@@ -712,7 +727,8 @@
       .field-grid,
       .image-controls-grid,
       .prompt-controls-grid,
-      .lore-controls-grid {
+      .lore-controls-grid,
+      .code-controls-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -735,6 +751,7 @@
       .image-tool-actions,
       .prompt-output-actions,
       .lore-output-actions,
+      .code-output-actions,
       .actions {
         align-items: stretch;
         flex-direction: column;
@@ -745,6 +762,7 @@
       .image-tool-actions button,
       .prompt-output-actions button,
       .lore-output-actions button,
+      .code-output-actions button,
       .download-button,
       .file-label {
         width: 100%;
@@ -900,6 +918,36 @@
               </div>
             </div>
 
+            <div id="codeControls" class="code-controls">
+              <div class="code-controls-grid">
+                <label>
+                  Mode
+                  <select id="codeMode" name="codeMode">
+                    <option value="Debug">Debug</option>
+                    <option value="Explain">Explain</option>
+                    <option value="Refactor">Refactor</option>
+                    <option value="Optimize">Optimize</option>
+                    <option value="Generate Feature">Generate Feature</option>
+                    <option value="Security Review">Security Review</option>
+                    <option value="Supabase Help">Supabase Help</option>
+                  </select>
+                </label>
+                <label>
+                  Language
+                  <select id="codeLanguage" name="codeLanguage">
+                    <option value="JavaScript">JavaScript</option>
+                    <option value="TypeScript">TypeScript</option>
+                    <option value="HTML">HTML</option>
+                    <option value="CSS">CSS</option>
+                    <option value="JSON">JSON</option>
+                    <option value="SQL">SQL</option>
+                    <option value="Python">Python</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
             <div id="uploadRow" class="upload-row">
               <label class="file-label">
                 Upload File
@@ -928,6 +976,12 @@
             <button id="sendLoreToImageButton" type="button" disabled>Send to Image Generator</button>
           </div>
 
+          <div id="codeOutputActions" class="code-output-actions">
+            <button id="copyCodeButton" type="button" disabled>Copy Code</button>
+            <button id="downloadCodeResponseButton" type="button" disabled>Download Response</button>
+            <button id="sendCodeToPromptButton" type="button" disabled>Send to Prompt Enhancer</button>
+          </div>
+
           <section id="imageGallery" class="image-gallery" aria-label="Recent image generations">
             <div class="image-gallery-head">
               <h3>Recent Images</h3>
@@ -942,6 +996,6 @@
 
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
-  <script type="module" src="scripts/ai-lab.js?v=lore-generator-live-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=code-helper-live-20260517"></script>
 </body>
 </html>

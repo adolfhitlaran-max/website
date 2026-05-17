@@ -111,12 +111,13 @@ const tools = [
     id: "code",
     title: "Code Helper",
     icon: "CO",
-    description: "Ask for code help, debugging notes, or implementation planning. Uploads are mocked for now.",
+    description: "Debug, explain, refactor, review, or generate code using pasted snippets and uploaded project files.",
     prompt: "Describe the bug or feature...",
     meta: "Language, framework, file path",
     action: "Help With Code",
-    aiTool: "code",
-    upload: { accept: ".txt,.js,.ts,.html,.css,.json,.md", multiple: true }
+    live: true,
+    endpoint: "ai-chat",
+    upload: { accept: ".js,.ts,.html,.css,.json,.md", multiple: true }
   },
   {
     id: "social",
@@ -131,14 +132,6 @@ const tools = [
 ];
 
 const aiToolPrompts = {
-  code: {
-    system: [
-      "You are a senior code helper.",
-      "Explain or fix pasted code with direct, practical guidance.",
-      "If code is broken, identify likely causes, suggest a corrected version, and mention any test or debugging step.",
-      "Do not pretend to run code. Be concise unless the pasted code requires detail."
-    ].join(" ")
-  },
   social: {
     system: [
       "You write short X/Twitter-style posts.",
@@ -151,11 +144,22 @@ const aiToolPrompts = {
 
 const PROMPT_ENHANCER_SYSTEM_PROMPT = "You are a prompt engineer. Rewrite the user's rough prompt into a detailed, high-quality prompt. Preserve the original idea, add concrete details, style, composition, lighting, mood, constraints, and output format. Do not add commentary. Only return the improved prompt.";
 const LORE_GENERATOR_SYSTEM_PROMPT = "You are a worldbuilding and game-lore assistant. Generate rich, usable lore from the user's idea. Include name, summary, visual identity, history, conflict, secrets, hooks, and how it could be used in a game or story. Match the selected type and tone. Avoid generic filler.";
+const CODE_HELPER_BASE_PROMPT = "You are a senior software engineering assistant. Use the user's pasted code, request, and uploaded files as context. Preserve indentation in code. Use markdown code blocks for code. Explain important changes, but do not ramble. If something is uncertain, state the assumption briefly.";
 
 const promptModeInstructions = {
   "Image Prompt": "Optimize the improved prompt for image generation. Emphasize subject, visual composition, camera/framing, lighting, style, mood, texture, color, negative constraints if useful, and a clear image output format.",
   "Story/Lore Prompt": "Optimize the improved prompt for worldbuilding and lore generation. Emphasize setting, factions, characters, conflicts, myths, locations, timeline hooks, tone, and the desired structured output.",
   "Code Prompt": "Optimize the improved prompt for coding help. Emphasize goal, environment, language/framework, constraints, expected behavior, error context, deliverables, and verification steps."
+};
+
+const codeModePrompts = {
+  Debug: "You are a senior debugging assistant. Find the bug, explain the root cause, and propose the smallest safe fix.",
+  Explain: "You are a senior code explainer. Explain what the code does, how the important pieces interact, and call out confusing or risky parts.",
+  Refactor: "You are a senior software engineer. Refactor the code for readability and maintainability without breaking functionality.",
+  Optimize: "You are a performance-minded engineer. Identify practical optimizations, explain tradeoffs, and provide improved code where useful.",
+  "Generate Feature": "You are a feature implementation assistant. Generate production-ready code that integrates with the existing project.",
+  "Security Review": "You are a security review assistant. Find realistic vulnerabilities, explain impact, and propose safe fixes without inventing issues.",
+  "Supabase Help": "You are a Supabase implementation assistant. Help with Supabase auth, RLS, SQL, Edge Functions, storage, and frontend integration."
 };
 
 const state = {
@@ -164,6 +168,7 @@ const state = {
   lastEnhancedPrompt: "",
   lastPromptEnhanced: "",
   lastLoreOutput: "",
+  lastCodeOutput: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -203,6 +208,13 @@ const els = {
   copyLore: document.getElementById("copyLoreButton"),
   sendLoreToPrompt: document.getElementById("sendLoreToPromptButton"),
   sendLoreToImage: document.getElementById("sendLoreToImageButton"),
+  codeControls: document.getElementById("codeControls"),
+  codeMode: document.getElementById("codeMode"),
+  codeLanguage: document.getElementById("codeLanguage"),
+  codeOutputActions: document.getElementById("codeOutputActions"),
+  copyCode: document.getElementById("copyCodeButton"),
+  downloadCodeResponse: document.getElementById("downloadCodeResponseButton"),
+  sendCodeToPrompt: document.getElementById("sendCodeToPromptButton"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
@@ -260,6 +272,7 @@ function renderTool(tool) {
   setUpload(tool);
   setPromptControls(tool);
   setLoreControls(tool);
+  setCodeControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -284,10 +297,15 @@ function isLoreGenerator(tool) {
   return tool.id === "lore";
 }
 
+function isCodeHelper(tool) {
+  return tool.id === "code";
+}
+
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
   if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
   if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
+  if (tool.id === "code") return "Code Helper is connected to ai-chat / Ollama.";
   if (tool.endpoint === "ai-chat") return "Chat AI is connected to ai-chat.";
   return `${tool.title} is connected to ai-chat and the configured Ollama backend.`;
 }
@@ -360,6 +378,20 @@ function setLoreOutputActions(isLoading = false) {
   els.sendLoreToImage.disabled = disabled;
 }
 
+function setCodeControls(tool) {
+  const active = isCodeHelper(tool);
+  els.codeControls.classList.toggle("active", active);
+  els.codeOutputActions.classList.toggle("active", active);
+  setCodeOutputActions();
+}
+
+function setCodeOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastCodeOutput;
+  els.copyCode.disabled = disabled;
+  els.downloadCodeResponse.disabled = disabled;
+  els.sendCodeToPrompt.disabled = disabled;
+}
+
 function setStatus(message, type = "") {
   els.status.className = `status-line ${type}`.trim();
   els.status.textContent = message;
@@ -371,6 +403,7 @@ function setLoading(isLoading) {
   els.output.classList.toggle("loading", isLoading);
   if (activeTool().id === "prompt") setPromptOutputActions(isLoading);
   if (activeTool().id === "lore") setLoreOutputActions(isLoading);
+  if (activeTool().id === "code") setCodeOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -432,6 +465,13 @@ async function handleSubmit(event) {
       const text = await runLoreGenerator(prompt, meta);
       renderLoreResult(text);
       setStatus("Lore Generator finished through ai-chat / Ollama.", "ok");
+      return;
+    }
+
+    if (tool.id === "code") {
+      const text = await runCodeHelper(prompt, meta);
+      renderCodeResult(text);
+      setStatus("Code Helper finished through ai-chat / Ollama.", "ok");
       return;
     }
 
@@ -1009,6 +1049,203 @@ function sendLoreToImageGenerator() {
   setStatus("Lore sent to Image Generator.", "ok");
 }
 
+async function runCodeHelper(prompt, meta) {
+  const files = await readUploadedCodeFiles();
+  if (!prompt && !files.length) {
+    throw new Error("Paste code, describe the problem, or upload a supported file first.");
+  }
+
+  const mode = els.codeMode.value || "Debug";
+  const language = els.codeLanguage.value || "JavaScript";
+  state.lastCodeOutput = "";
+  setCodeOutputActions(true);
+
+  const data = await callAiChat({
+    prompt: buildCodeHelperPrompt(prompt, meta, mode, language, files)
+  });
+
+  const reply = String(data?.text || data?.reply || "").trim();
+  if (!reply) throw new Error("ai-chat returned an empty code response.");
+
+  state.lastCodeOutput = reply;
+  setCodeOutputActions();
+  return reply;
+}
+
+function buildCodeHelperPrompt(prompt, meta, mode, language, files) {
+  const modePrompt = codeModePrompts[mode] || codeModePrompts.Debug;
+  const uploadedContext = files.length
+    ? files.map(formatUploadedCodeFile).join("\n\n")
+    : "No uploaded file contents.";
+
+  return [
+    CODE_HELPER_BASE_PROMPT,
+    modePrompt,
+    "",
+    `Mode: ${mode}`,
+    `Language: ${language}`,
+    meta && `Project/context details:\n${meta}`,
+    prompt && `User request or pasted code:\n\n\`\`\`${codeFenceLanguage(language)}\n${prompt}\n\`\`\``,
+    `Uploaded files:\n${uploadedContext}`,
+    "Response requirements: preserve indentation, use code blocks for changed or generated code, explain important changes, include the smallest safe fix when debugging, and keep the answer concise."
+  ].filter(Boolean).join("\n\n");
+}
+
+function formatUploadedCodeFile(file) {
+  return [
+    `File: ${file.name}`,
+    `\`\`\`${file.language}`,
+    file.content,
+    "```"
+  ].join("\n");
+}
+
+async function readUploadedCodeFiles() {
+  const files = selectedFiles();
+  if (!files.length) return [];
+
+  const allowedExtensions = new Set([".js", ".ts", ".html", ".css", ".json", ".md"]);
+  const maxPerFile = 18000;
+  const maxTotal = 52000;
+  const loaded = [];
+  let used = 0;
+
+  for (const file of files) {
+    const extension = fileExtension(file.name);
+    if (!allowedExtensions.has(extension)) {
+      console.warn("Skipped unsupported Code Helper upload:", file.name);
+      continue;
+    }
+
+    const remaining = maxTotal - used;
+    if (remaining <= 0) break;
+
+    const raw = await file.text();
+    const limit = Math.min(maxPerFile, remaining);
+    const content = raw.length > limit
+      ? `${raw.slice(0, limit)}\n\n/* File truncated for AI context. */`
+      : raw;
+
+    loaded.push({
+      name: file.name,
+      language: codeFenceLanguageFromExtension(extension),
+      content
+    });
+    used += content.length;
+  }
+
+  return loaded;
+}
+
+function fileExtension(filename) {
+  const match = String(filename || "").toLowerCase().match(/\.[^.]+$/);
+  return match ? match[0] : "";
+}
+
+function codeFenceLanguage(language) {
+  const normalized = String(language || "").toLowerCase();
+  const map = {
+    javascript: "javascript",
+    typescript: "typescript",
+    html: "html",
+    css: "css",
+    json: "json",
+    sql: "sql",
+    python: "python"
+  };
+  return map[normalized] || "";
+}
+
+function codeFenceLanguageFromExtension(extension) {
+  const map = {
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".html": "html",
+    ".css": "css",
+    ".json": "json",
+    ".md": "markdown"
+  };
+  return map[extension] || "";
+}
+
+function renderCodeResult(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "code-result";
+
+  const label = document.createElement("p");
+  label.className = "prompt-result-label";
+  label.textContent = "Code Helper Response";
+
+  const body = document.createElement("div");
+  body.className = "prompt-result-body code-result-body";
+  body.textContent = text;
+
+  wrap.append(label, body);
+  els.output.replaceChildren(wrap);
+}
+
+async function copyCode() {
+  const response = state.lastCodeOutput.trim();
+  if (!response) {
+    setStatus("Run Code Helper first, then copy the code. Wild concept.", "error");
+    return;
+  }
+
+  const code = extractCodeBlocks(response) || response;
+  try {
+    await navigator.clipboard.writeText(code);
+    setStatus("Code copied.", "ok");
+  } catch (error) {
+    console.error("Code copy failed:", error);
+    setStatus("Copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function downloadCodeResponse() {
+  const response = state.lastCodeOutput.trim();
+  if (!response) {
+    setStatus("Run Code Helper first, then download the response.", "error");
+    return;
+  }
+
+  const blob = new Blob([response], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "uncensored-media-code-helper-response.md";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus("Code Helper response downloaded.", "ok");
+}
+
+function sendCodeToPromptEnhancer() {
+  const response = state.lastCodeOutput.trim();
+  if (!response) {
+    setStatus("Run Code Helper first, then send the response somewhere.", "error");
+    return;
+  }
+
+  selectTool("prompt");
+  els.prompt.value = response;
+  els.promptMode.value = "Code Prompt";
+  setStatus("Code Helper response sent to Prompt Enhancer.", "ok");
+}
+
+function extractCodeBlocks(markdown) {
+  const blocks = [];
+  const pattern = /```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g;
+  let match = pattern.exec(markdown);
+
+  while (match) {
+    blocks.push(match[1].trim());
+    match = pattern.exec(markdown);
+  }
+
+  return blocks.join("\n\n").trim();
+}
+
 async function runStructuredAiTool(tool, prompt, meta) {
   if (!prompt) {
     throw new Error(`Feed ${tool.title} a prompt first. It is powerful, not psychic.`);
@@ -1105,7 +1342,6 @@ function placeholderSuggestion(id, prompt) {
     upscaler: "Upscale placeholder ready. Real provider should return original/enhanced comparison data.",
     voice: "Voice job placeholder ready. Real provider should return an audio URL and transcript.",
     music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
-    code: "Code helper placeholder ready. Real provider should return patch suggestions, risks, and test notes.",
     social: "Social post placeholder ready. Real provider should return short post variants."
   };
 
@@ -1136,6 +1372,10 @@ function clearTool() {
     state.lastLoreOutput = "";
     setLoreOutputActions();
   }
+  if (activeTool().id === "code") {
+    state.lastCodeOutput = "";
+    setCodeOutputActions();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -1158,6 +1398,9 @@ function boot() {
   els.copyLore.addEventListener("click", copyLore);
   els.sendLoreToPrompt.addEventListener("click", sendLoreToPromptEnhancer);
   els.sendLoreToImage.addEventListener("click", sendLoreToImageGenerator);
+  els.copyCode.addEventListener("click", copyCode);
+  els.downloadCodeResponse.addEventListener("click", downloadCodeResponse);
+  els.sendCodeToPrompt.addEventListener("click", sendCodeToPromptEnhancer);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });
