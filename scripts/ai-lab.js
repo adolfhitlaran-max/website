@@ -10,7 +10,8 @@ const tools = [
     prompt: "Ask Archivist AI anything...",
     meta: "Tone, format, or context",
     action: "Send",
-    live: true
+    live: true,
+    endpoint: "ai-chat"
   },
   {
     id: "image",
@@ -19,7 +20,9 @@ const tools = [
     description: "Generate real images through the ai-image Hugging Face backend.",
     prompt: "Describe the image...",
     meta: "Style and aspect ratio, like cinematic 16:9",
-    action: "Generate Image"
+    action: "Generate Image",
+    live: true,
+    endpoint: "ai-image"
   },
   {
     id: "video",
@@ -222,7 +225,7 @@ function renderTool(tool) {
   els.meta.placeholder = tool.meta;
   els.button.textContent = tool.action;
   els.activeToolStat.textContent = tool.title;
-  els.backendStat.textContent = imageGenerator ? "ai-image / Hugging Face" : backendPowered ? "ai-chat / Ollama" : "prototype";
+  els.backendStat.textContent = backendLabel(tool);
   els.output.textContent = outputIntro(tool);
   setStatus(
     backendPowered
@@ -235,15 +238,23 @@ function renderTool(tool) {
 }
 
 function isBackendTool(tool) {
-  return Boolean(tool.live || tool.aiTool || isImageGenerator(tool));
+  return Boolean(tool.live || tool.aiTool);
 }
 
 function isImageGenerator(tool) {
   return tool.id === "image";
 }
 
+function backendLabel(tool) {
+  if (tool.endpoint === "ai-image") return "ai-image / Hugging Face";
+  if (tool.endpoint === "ai-chat") return "ai-chat";
+  if (tool.aiTool) return "ai-chat / Ollama";
+  return "prototype";
+}
+
 function backendStatusMessage(tool) {
-  if (isImageGenerator(tool)) return `${tool.title} is connected to the ai-image Hugging Face backend.`;
+  if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
+  if (tool.endpoint === "ai-chat") return "Chat AI is connected to ai-chat.";
   return `${tool.title} is connected to ai-chat and the configured Ollama backend.`;
 }
 
@@ -328,15 +339,15 @@ async function handleSubmit(event) {
   }
 
   try {
-    if (tool.id === "image") {
-      const data = await runImageGenerator(prompt, meta);
-      renderImageResult(data);
-      setStatus(`${tool.title} finished through ai-image / Hugging Face.`, "ok");
+    if (tool.id === "chat") {
+      await runChat([prompt, meta && `Context: ${meta}`].filter(Boolean).join("\n\n"));
       return;
     }
 
-    if (tool.id === "chat") {
-      await runChat([prompt, meta && `Context: ${meta}`].filter(Boolean).join("\n\n"));
+    if (tool.id === "image") {
+      const data = await runImage(prompt, meta);
+      renderImageResult(data);
+      setStatus(`${tool.title} finished through ai-image / Hugging Face.`, "ok");
       return;
     }
 
@@ -347,7 +358,7 @@ async function handleSubmit(event) {
       return;
     }
 
-    const text = await runUnfinishedToolPlaceholder(tool, prompt, meta);
+    const text = await runMockTool(tool, prompt, meta);
     els.output.textContent = text;
     setStatus(`${tool.title} placeholder ready. Provider wiring can come next.`, "ok");
   } catch (error) {
@@ -378,7 +389,7 @@ async function runChat(prompt) {
   setStatus(`Chat AI replied through ${data?.provider || "ai-chat"}${data?.model ? ` (${data.model})` : ""}.`, "ok");
 }
 
-async function runImageGenerator(prompt, meta) {
+async function runImage(prompt, meta) {
   if (!prompt) {
     throw new Error("Describe the image first. Blank canvas, blank results.");
   }
@@ -541,7 +552,7 @@ async function callAiChat(payload) {
   return data;
 }
 
-function runUnfinishedToolPlaceholder(tool, prompt, meta) {
+function runMockTool(tool, prompt, meta) {
   return new Promise((resolve) => {
     window.setTimeout(() => {
       resolve([
