@@ -38,6 +38,10 @@
     const existing = document.getElementById(FLOATING_LINK_ID);
     if (existing) return existing;
 
+    if (document.querySelector(".topbar, .sidebar")) {
+      document.documentElement.classList.add("um-auth-has-site-nav");
+    }
+
     const link = document.createElement("a");
     link.id = FLOATING_LINK_ID;
     link.href = loginUrl();
@@ -87,6 +91,16 @@
           max-width: min(10.5rem, calc(100vw - 0.9rem));
           padding: 0.45rem 0.66rem;
           font-size: 0.74rem;
+        }
+      }
+
+      .um-auth-has-site-nav #${FLOATING_LINK_ID} {
+        top: calc(max(0.65rem, env(safe-area-inset-top)) + 4.35rem);
+      }
+
+      @media (max-width: 720px) {
+        .um-auth-has-site-nav #${FLOATING_LINK_ID} {
+          top: calc(max(0.45rem, env(safe-area-inset-top)) + 5.8rem);
         }
       }
     `;
