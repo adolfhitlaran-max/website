@@ -2,6 +2,7 @@ import { getCurrentUserAndProfile, supabase } from "../js/supabaseClient.js";
 
 const AI_CHAT_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-chat";
 const AI_IMAGE_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-image";
+const AI_MUSIC_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-music";
 
 const tools = [
   {
@@ -83,10 +84,12 @@ const tools = [
     id: "music",
     title: "Music Generator",
     icon: "MU",
-    description: "Sketch a music generation brief: genre, tempo, mood, and where the track should go.",
+    description: "Generate short WAV music clips through ai-music and the configured MusicGen provider.",
     prompt: "Describe the track...",
-    meta: "Genre, BPM, length",
-    action: "Generate Music"
+    meta: "Optional extra direction",
+    action: "Generate Music",
+    live: true,
+    endpoint: "ai-music"
   },
   {
     id: "prompt",
@@ -188,6 +191,8 @@ const state = {
   speechSynthesisVoices: [],
   currentSpeechUtterance: null,
   lastSpeechText: "",
+  lastMusicRequest: null,
+  lastMusicResult: null,
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -278,7 +283,16 @@ const els = {
   output: document.getElementById("toolOutput"),
   imageGallery: document.getElementById("imageGallery"),
   imageGalleryStatus: document.getElementById("imageGalleryStatus"),
-  imageGalleryGrid: document.getElementById("imageGalleryGrid")
+  imageGalleryGrid: document.getElementById("imageGalleryGrid"),
+  musicControls: document.getElementById("musicControls"),
+  musicGenre: document.getElementById("musicGenre"),
+  musicDuration: document.getElementById("musicDuration"),
+  musicBpm: document.getElementById("musicBpm"),
+  musicMood: document.getElementById("musicMood"),
+  musicOutputActions: document.getElementById("musicOutputActions"),
+  downloadMusicWav: document.getElementById("downloadMusicWavButton"),
+  copyMusicPrompt: document.getElementById("copyMusicPromptButton"),
+  sendMusicPromptToPrompt: document.getElementById("sendMusicPromptToPromptButton")
 };
 
 function activeTool() {
@@ -318,8 +332,11 @@ function selectTool(id) {
 function renderTool(tool) {
   const backendPowered = isBackendTool(tool);
   const imageGenerator = isImageGenerator(tool);
+  const musicGenerator = isMusicGenerator(tool);
   const browserTool = isBrowserTool(tool);
-  els.kicker.textContent = imageGenerator
+  els.kicker.textContent = musicGenerator
+    ? "Live AI Music"
+    : imageGenerator
     ? "Live Image Backend"
     : browserTool
       ? "Live Browser Tool"
@@ -346,6 +363,7 @@ function renderTool(tool) {
   setBackgroundControls(tool);
   setUpscalerControls(tool);
   setVoiceControls(tool);
+  setMusicControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -364,6 +382,10 @@ function isBrowserTool(tool) {
 
 function isImageGenerator(tool) {
   return tool.id === "image";
+}
+
+function isMusicGenerator(tool) {
+  return tool.id === "music";
 }
 
 function isPromptEnhancer(tool) {
@@ -396,6 +418,7 @@ function isVoiceTool(tool) {
 
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
+  if (tool.endpoint === "ai-music") return "ai-music / MusicGen";
   if (tool.browserTool === "tesseract") return "OCR is powered by Tesseract.js locally in your browser. No image upload or API key needed.";
   if (tool.browserTool === "background-removal") return "Browser background removal runs locally and exports a transparent PNG. No Supabase upload or API key needed.";
   if (tool.browserTool === "canvas-upscaler") return "Browser Canvas upscales images locally with smoothing and optional sharpening. No Supabase upload or API key needed.";
@@ -414,6 +437,10 @@ function outputIntro(tool) {
 
   if (isImageGenerator(tool)) {
     return `${tool.title} output will show up here.`;
+  }
+
+  if (isMusicGenerator(tool)) {
+    return "Generated audio will show up here with a player and download button.";
   }
 
   if (isOcrTool(tool)) {
@@ -463,6 +490,21 @@ function setImageControls(tool) {
   els.imageGallery.classList.toggle("active", active);
   els.generateSimilar.disabled = !state.lastImageRequest;
   els.useEnhancedPrompt.disabled = !state.lastEnhancedPrompt;
+}
+
+function setMusicControls(tool) {
+  const active = isMusicGenerator(tool);
+  els.musicControls.classList.toggle("active", active);
+  els.musicOutputActions.classList.toggle("active", active);
+  setMusicOutputActions();
+}
+
+function setMusicOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastMusicResult?.audio_url;
+  const promptAvailable = Boolean(state.lastMusicRequest?.prompt || musicRequestFromForm({ allowEmpty: true }).prompt);
+  els.downloadMusicWav.disabled = disabled;
+  els.copyMusicPrompt.disabled = isLoading || !promptAvailable;
+  els.sendMusicPromptToPrompt.disabled = isLoading || !promptAvailable;
 }
 
 function setPromptControls(tool) {
@@ -605,6 +647,7 @@ function setLoading(isLoading) {
   if (activeTool().id === "upscaler") setUpscalerOutputActions(isLoading);
   if (activeTool().id === "voice") setVoiceOutputActions(isLoading);
   if (activeTool().id === "voice") setTextToSpeechControls();
+  if (activeTool().id === "music") setMusicOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -660,6 +703,8 @@ async function handleSubmit(event) {
   setStatus(`${tool.title} is working...`);
   if (tool.id === "image") {
     renderLoadingState("Generating image with Hugging Face...");
+  } else if (tool.id === "music") {
+    renderLoadingState("Generating music with ai-music / MusicGen...");
   } else if (tool.id === "upscaler") {
     renderLoadingState("Upscaling locally with browser canvas...");
   } else {
@@ -674,6 +719,11 @@ async function handleSubmit(event) {
 
     if (tool.id === "image") {
       await generateImageFromRequest(imageRequestFromForm());
+      return;
+    }
+
+    if (tool.id === "music") {
+      await generateMusicFromRequest(musicRequestFromForm());
       return;
     }
 
@@ -733,6 +783,8 @@ async function handleSubmit(event) {
     console.error(`${tool.title} failed:`, error);
     if (tool.id === "image") {
       renderErrorState(error);
+    } else if (tool.id === "music") {
+      renderMusicErrorState(error);
     } else {
       els.output.textContent = error.message || "The tool fell over. Very elegant.";
     }
@@ -847,6 +899,191 @@ async function runImage(request) {
     ...data,
     image_url
   };
+}
+
+function musicRequestFromForm(options = {}) {
+  const allowEmpty = Boolean(options.allowEmpty);
+  const prompt = String(els.prompt.value || "").trim();
+  const mood = String(els.musicMood.value || "").trim();
+  const bpmValue = String(els.musicBpm.value || "").trim();
+
+  return {
+    prompt: [
+      prompt,
+      mood && `Mood: ${mood}`,
+      bpmValue && `BPM: ${bpmValue}`
+    ].filter(Boolean).join("\n\n"),
+    basePrompt: prompt,
+    genre: String(els.musicGenre.value || "Fantasy").trim(),
+    duration: Number(els.musicDuration.value || 10),
+    bpm: bpmValue ? Number(bpmValue) : null,
+    mood,
+    allowEmpty
+  };
+}
+
+async function generateMusicFromRequest(request) {
+  if (!request.basePrompt && !request.prompt) {
+    throw new Error("Describe the track first. The Music Generator cannot hum telepathically yet.");
+  }
+
+  setLoading(true);
+  setStatus("Music Generator is working...");
+  renderLoadingState("Generating music with ai-music / MusicGen...");
+
+  try {
+    const data = await runMusic(request);
+    state.lastMusicRequest = request;
+    state.lastMusicResult = data;
+    renderMusicResult(data, request);
+    setMusicOutputActions();
+    setStatus(`Music generated through ${data.provider || "ai-music"}${data.model ? ` (${data.model})` : ""}.`, "ok");
+    return data;
+  } catch (error) {
+    console.error("Music generation failed:", error);
+    renderMusicErrorState(error);
+    setStatus("Music Generator failed. The real error is shown below.", "error");
+    throw error;
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function runMusic(request) {
+  const response = await fetch(AI_MUSIC_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      prompt: request.prompt,
+      genre: request.genre,
+      duration: request.duration,
+      bpm: request.bpm,
+      mood: request.mood
+    })
+  });
+
+  const responseText = await response.text();
+  let data = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch (error) {
+    console.error("ai-music JSON parse failed:", { responseText, error });
+    throw new Error("ai-music returned invalid JSON.");
+  }
+
+  if (!response.ok || data?.ok === false) {
+    console.error("ai-music request failed:", {
+      status: response.status,
+      responseText,
+      data
+    });
+    const message = data?.details || data?.error || `ai-music returned ${response.status}.`;
+    const musicError = new Error(message);
+    musicError.details = data;
+    throw musicError;
+  }
+
+  const audio_url = String(data?.audio_url || "").trim();
+  if (!audio_url) throw new Error("ai-music returned no audio_url.");
+
+  return {
+    ...data,
+    audio_url
+  };
+}
+
+function renderMusicResult(data, request = state.lastMusicRequest) {
+  const wrap = document.createElement("div");
+  wrap.className = "music-result";
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.preload = "metadata";
+  audio.src = data.audio_url;
+
+  const meta = document.createElement("p");
+  meta.className = "image-result-meta";
+  meta.textContent = [
+    `Provider: ${data.provider || "ai-music"}${data.model ? ` (${data.model})` : ""}`,
+    request?.genre && `Genre: ${request.genre}`,
+    data.duration || request?.duration ? `Duration: ${data.duration || request.duration}s` : "",
+    request?.bpm && `BPM: ${request.bpm}`,
+    request?.mood && `Mood: ${request.mood}`
+  ].filter(Boolean).join(" | ");
+
+  const promptLabel = document.createElement("p");
+  promptLabel.className = "prompt-result-label";
+  promptLabel.textContent = "Prompt";
+
+  const promptBody = document.createElement("div");
+  promptBody.className = "prompt-result-body";
+  promptBody.textContent = data.prompt || request?.prompt || "No prompt returned.";
+
+  wrap.append(audio, meta, promptLabel, promptBody);
+  els.output.replaceChildren(wrap);
+}
+
+function renderMusicErrorState(error) {
+  const box = document.createElement("div");
+  box.className = "error-box";
+  box.textContent = error?.message || "Music generation failed.";
+  els.output.replaceChildren(box);
+}
+
+function downloadMusicWav() {
+  const audioUrl = state.lastMusicResult?.audio_url;
+  if (!audioUrl) {
+    setStatus("Generate music first, then download the WAV.", "error");
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = audioUrl;
+  link.download = musicOutputFilename(state.lastMusicRequest);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setStatus("Music WAV downloaded.", "ok");
+}
+
+async function copyMusicPrompt() {
+  const prompt = (state.lastMusicRequest?.prompt || musicRequestFromForm({ allowEmpty: true }).prompt || "").trim();
+  if (!prompt) {
+    setStatus("Write a music prompt before copying it.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(prompt);
+    setStatus("Music prompt copied.", "ok");
+  } catch (error) {
+    console.error("Music prompt copy failed:", error);
+    setStatus("Copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function sendMusicPromptToPromptEnhancer() {
+  const prompt = (state.lastMusicRequest?.prompt || musicRequestFromForm({ allowEmpty: true }).prompt || "").trim();
+  if (!prompt) {
+    setStatus("Write a music prompt before sending it somewhere.", "error");
+    return;
+  }
+
+  selectTool("prompt");
+  els.prompt.value = prompt;
+  els.promptMode.value = "Story/Lore Prompt";
+  setStatus("Music prompt sent to Prompt Enhancer.", "ok");
+}
+
+function musicOutputFilename(request) {
+  const genre = String(request?.genre || "music")
+    .replace(/[^a-z0-9-_]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "music";
+  const duration = request?.duration || "clip";
+  return `uncensored-media-${genre}-${duration}s.wav`;
 }
 
 function renderLoadingState(message) {
@@ -2477,7 +2714,6 @@ function placeholderSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
-    music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
     social: "Social post placeholder ready. Real provider should return short post variants."
   };
 
@@ -2540,6 +2776,13 @@ function clearTool() {
     setVoiceRecordingState();
     setTextToSpeechControls();
   }
+  if (activeTool().id === "music") {
+    state.lastMusicRequest = null;
+    state.lastMusicResult = null;
+    els.musicBpm.value = "";
+    els.musicMood.value = "";
+    setMusicOutputActions();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -2597,6 +2840,17 @@ function boot() {
   els.sendVoiceToChat.addEventListener("click", sendVoiceTranscriptToChatAi);
   els.sendVoiceToPrompt.addEventListener("click", sendVoiceTranscriptToPromptEnhancer);
   els.downloadVoiceTranscript.addEventListener("click", downloadVoiceTranscript);
+  els.downloadMusicWav.addEventListener("click", downloadMusicWav);
+  els.copyMusicPrompt.addEventListener("click", copyMusicPrompt);
+  els.sendMusicPromptToPrompt.addEventListener("click", sendMusicPromptToPromptEnhancer);
+  [els.musicGenre, els.musicDuration, els.musicBpm, els.musicMood].forEach((input) => {
+    input.addEventListener("input", () => {
+      if (activeTool().id === "music") setMusicOutputActions();
+    });
+  });
+  els.prompt.addEventListener("input", () => {
+    if (activeTool().id === "music") setMusicOutputActions();
+  });
   if (isSpeechSynthesisSupported()) {
     populateSpeechSynthesisVoices();
     window.speechSynthesis.onvoiceschanged = populateSpeechSynthesisVoices;

@@ -21,3 +21,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/ai-image/deno.json"
 entrypoint = "./functions/ai-image/index.ts"
+
+[functions.ai-music]
+enabled = true
+verify_jwt = false
+import_map = "./functions/ai-music/deno.json"
+entrypoint = "./functions/ai-music/index.ts"

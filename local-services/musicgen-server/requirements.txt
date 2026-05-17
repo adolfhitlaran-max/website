@@ -1,0 +1,9 @@
+accelerate
+fastapi
+numpy
+pydantic
+scipy
+sentencepiece
+torch
+transformers
+uvicorn[standard]
