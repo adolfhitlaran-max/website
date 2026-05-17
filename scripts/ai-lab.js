@@ -73,11 +73,11 @@ const tools = [
     id: "voice",
     title: "Voice AI",
     icon: "VO",
-    description: "Draft voice generation or voice cleanup jobs with optional reference audio.",
-    prompt: "Write the voice line or describe the voice task...",
-    meta: "Voice style, speed, emotion",
-    action: "Generate Voice",
-    upload: { accept: "audio/*", multiple: false }
+    description: "Record speech in your browser and transcribe it locally with the Web Speech API.",
+    prompt: "Transcript notes or what you want to do with it...",
+    meta: "Optional context",
+    action: "Show Transcript",
+    browserTool: "web-speech"
   },
   {
     id: "music",
@@ -180,6 +180,10 @@ const state = {
   lastUpscaledUrl: "",
   lastUpscalerOriginalUrl: "",
   lastUpscalerOriginalName: "",
+  speechRecognition: null,
+  isRecordingVoice: false,
+  lastVoiceTranscript: "",
+  voiceInterimTranscript: "",
   lastImageRequest: null,
   lastImageResult: null,
   galleryLoaded: false
@@ -241,6 +245,15 @@ const els = {
   upscalerSharpen: document.getElementById("upscalerSharpen"),
   upscalerOutputActions: document.getElementById("upscalerOutputActions"),
   downloadUpscaledPng: document.getElementById("downloadUpscaledPngButton"),
+  voiceControls: document.getElementById("voiceControls"),
+  startVoiceRecording: document.getElementById("startVoiceRecordingButton"),
+  stopVoiceRecording: document.getElementById("stopVoiceRecordingButton"),
+  liveVoiceTranscript: document.getElementById("liveVoiceTranscript"),
+  voiceOutputActions: document.getElementById("voiceOutputActions"),
+  copyVoiceTranscript: document.getElementById("copyVoiceTranscriptButton"),
+  sendVoiceToChat: document.getElementById("sendVoiceToChatButton"),
+  sendVoiceToPrompt: document.getElementById("sendVoiceToPromptButton"),
+  downloadVoiceTranscript: document.getElementById("downloadVoiceTranscriptButton"),
   button: document.getElementById("generateButton"),
   clear: document.getElementById("clearButton"),
   output: document.getElementById("toolOutput"),
@@ -273,6 +286,9 @@ function renderTabs() {
 }
 
 function selectTool(id) {
+  if (state.activeId === "voice" && id !== "voice") {
+    stopExistingSpeechRecognition();
+  }
   state.activeId = id;
   const tool = activeTool();
   renderTabs();
@@ -309,6 +325,7 @@ function renderTool(tool) {
   setOcrControls(tool);
   setBackgroundControls(tool);
   setUpscalerControls(tool);
+  setVoiceControls(tool);
   setImageControls(tool);
   setLoading(false);
 
@@ -353,11 +370,16 @@ function isUpscalerTool(tool) {
   return tool.id === "upscaler";
 }
 
+function isVoiceTool(tool) {
+  return tool.id === "voice";
+}
+
 function backendStatusMessage(tool) {
   if (tool.endpoint === "ai-image") return "Image Generator is connected to ai-image.";
   if (tool.browserTool === "tesseract") return "OCR is powered by Tesseract.js locally in your browser. No image upload or API key needed.";
   if (tool.browserTool === "background-removal") return "Browser background removal runs locally and exports a transparent PNG. No Supabase upload or API key needed.";
   if (tool.browserTool === "canvas-upscaler") return "Browser Canvas upscales images locally with smoothing and optional sharpening. No Supabase upload or API key needed.";
+  if (tool.browserTool === "web-speech") return "Web Speech API transcribes speech in supported browsers. No Supabase upload or API key needed.";
   if (tool.id === "prompt") return "Prompt Enhancer is connected to ai-chat / Ollama.";
   if (tool.id === "lore") return "Lore Generator is connected to ai-chat / Ollama.";
   if (tool.id === "code") return "Code Helper is connected to ai-chat / Ollama.";
@@ -384,6 +406,10 @@ function outputIntro(tool) {
 
   if (isUpscalerTool(tool)) {
     return "Upload an image, choose a scale, and the before/after preview will show up here.";
+  }
+
+  if (isVoiceTool(tool)) {
+    return "Click Start Recording, speak, then stop when you are done. Transcript shows up here.";
   }
 
   if (tool.aiTool) {
@@ -496,6 +522,34 @@ function setUpscalerOutputActions(isLoading = false) {
   els.downloadUpscaledPng.disabled = isLoading || !state.lastUpscaledBlob;
 }
 
+function setVoiceControls(tool) {
+  const active = isVoiceTool(tool);
+  els.voiceControls.classList.toggle("active", active);
+  els.voiceOutputActions.classList.toggle("active", active);
+  setVoiceRecordingState();
+  setVoiceOutputActions();
+}
+
+function setVoiceRecordingState() {
+  const supported = Boolean(getSpeechRecognitionConstructor());
+  els.startVoiceRecording.disabled = state.isRecordingVoice;
+  els.stopVoiceRecording.disabled = !state.isRecordingVoice || !supported;
+
+  if (!supported) {
+    els.liveVoiceTranscript.textContent = "Speech recognition is not supported in this browser. Try Chrome.";
+  } else if (!state.lastVoiceTranscript && !state.voiceInterimTranscript) {
+    els.liveVoiceTranscript.textContent = "Microphone transcript will appear here while you speak.";
+  }
+}
+
+function setVoiceOutputActions(isLoading = false) {
+  const disabled = isLoading || !state.lastVoiceTranscript.trim();
+  els.copyVoiceTranscript.disabled = disabled;
+  els.sendVoiceToChat.disabled = disabled;
+  els.sendVoiceToPrompt.disabled = disabled;
+  els.downloadVoiceTranscript.disabled = disabled;
+}
+
 function setStatus(message, type = "") {
   els.status.className = `status-line ${type}`.trim();
   els.status.textContent = message;
@@ -511,6 +565,7 @@ function setLoading(isLoading) {
   if (activeTool().id === "ocr") setOcrOutputActions(isLoading);
   if (activeTool().id === "background") setBackgroundOutputActions(isLoading);
   if (activeTool().id === "upscaler") setUpscalerOutputActions(isLoading);
+  if (activeTool().id === "voice") setVoiceOutputActions(isLoading);
 }
 
 function selectedFiles() {
@@ -549,6 +604,24 @@ async function handleSubmit(event) {
 
   if (tool.id === "upscaler" && !selectedFiles().length) {
     setStatus("Upload an image first. Upscaling imaginary pixels remains illegal.", "error");
+    return;
+  }
+
+  if (tool.id === "voice") {
+    if (state.isRecordingVoice) {
+      setStatus("Stop recording first, then use the transcript.", "error");
+      return;
+    }
+    if (!getSpeechRecognitionConstructor()) {
+      showVoiceUnsupportedError();
+      return;
+    }
+    if (!state.lastVoiceTranscript.trim()) {
+      setStatus("Click Start Recording first. The browser cannot transcribe silence on vibes alone.", "error");
+      return;
+    }
+    renderVoiceTranscriptResult();
+    setStatus("Voice transcript ready.", "ok");
     return;
   }
 
@@ -1463,6 +1536,213 @@ function clearUpscalerResultUrls() {
   state.lastUpscalerOriginalUrl = "";
 }
 
+function getSpeechRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition;
+}
+
+function startVoiceRecording() {
+  const SpeechRecognition = getSpeechRecognitionConstructor();
+  if (!SpeechRecognition) {
+    showVoiceUnsupportedError();
+    return;
+  }
+
+  stopExistingSpeechRecognition();
+  state.lastVoiceTranscript = "";
+  state.voiceInterimTranscript = "";
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+  state.speechRecognition = recognition;
+
+  recognition.onstart = () => {
+    state.isRecordingVoice = true;
+    setVoiceRecordingState();
+    setVoiceOutputActions(true);
+    renderLiveVoiceTranscript();
+    setStatus("Listening through the Web Speech API...");
+  };
+
+  recognition.onresult = (event) => {
+    let interim = "";
+    let finalText = state.lastVoiceTranscript;
+
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = String(event.results[index][0]?.transcript || "").trim();
+      if (!transcript) continue;
+      if (event.results[index].isFinal) {
+        finalText = [finalText, transcript].filter(Boolean).join(" ");
+      } else {
+        interim = [interim, transcript].filter(Boolean).join(" ");
+      }
+    }
+
+    state.lastVoiceTranscript = finalText.trim();
+    state.voiceInterimTranscript = interim.trim();
+    renderLiveVoiceTranscript();
+    renderVoiceTranscriptResult();
+    setVoiceOutputActions(state.isRecordingVoice);
+  };
+
+  recognition.onerror = (event) => {
+    console.error("Voice recognition failed:", event);
+    const detail = event?.error ? ` ${event.error}` : "";
+    state.isRecordingVoice = false;
+    state.voiceInterimTranscript = "";
+    state.speechRecognition = null;
+    setVoiceRecordingState();
+    setVoiceOutputActions();
+    els.output.textContent = `Speech recognition failed.${detail}`;
+    setStatus(`Voice AI failed.${detail}`, "error");
+  };
+
+  recognition.onend = () => {
+    state.isRecordingVoice = false;
+    state.voiceInterimTranscript = "";
+    state.speechRecognition = null;
+    setVoiceRecordingState();
+    setVoiceOutputActions();
+    renderVoiceTranscriptResult();
+    setStatus(
+      state.lastVoiceTranscript.trim()
+        ? "Voice transcript ready."
+        : "Recording stopped. No transcript captured.",
+      state.lastVoiceTranscript.trim() ? "ok" : ""
+    );
+  };
+
+  try {
+    recognition.start();
+  } catch (error) {
+    console.error("Voice recording could not start:", error);
+    state.isRecordingVoice = false;
+    setVoiceRecordingState();
+    setStatus(`Voice AI could not start: ${error.message || error}`, "error");
+    els.output.textContent = error.message || "Voice AI could not start.";
+  }
+}
+
+function stopVoiceRecording() {
+  if (!state.speechRecognition || !state.isRecordingVoice) {
+    setStatus("Voice AI is not recording.", "error");
+    return;
+  }
+
+  setStatus("Stopping recording...");
+  state.speechRecognition.stop();
+}
+
+function stopExistingSpeechRecognition() {
+  if (!state.speechRecognition) return;
+
+  try {
+    state.speechRecognition.onend = null;
+    state.speechRecognition.onerror = null;
+    state.speechRecognition.onresult = null;
+    state.speechRecognition.stop();
+  } catch (error) {
+    console.warn("Previous speech recognition stop failed:", error);
+  }
+
+  state.speechRecognition = null;
+  state.isRecordingVoice = false;
+}
+
+function showVoiceUnsupportedError() {
+  const message = "Speech recognition is not supported in this browser. Try Chrome.";
+  els.liveVoiceTranscript.textContent = message;
+  els.output.textContent = message;
+  setStatus(message, "error");
+}
+
+function renderLiveVoiceTranscript() {
+  const transcript = state.lastVoiceTranscript.trim();
+  const interim = state.voiceInterimTranscript.trim();
+  const text = [transcript, interim && `${interim} ...`].filter(Boolean).join(" ");
+  els.liveVoiceTranscript.textContent = text || "Listening. Speak into the mic.";
+}
+
+function renderVoiceTranscriptResult() {
+  const wrap = document.createElement("div");
+  wrap.className = "voice-result";
+
+  const label = document.createElement("p");
+  label.className = "prompt-result-label";
+  label.textContent = state.isRecordingVoice ? "Live Transcript" : "Final Transcript";
+
+  const body = document.createElement("div");
+  body.className = "prompt-result-body";
+  const transcript = state.lastVoiceTranscript.trim();
+  const interim = state.voiceInterimTranscript.trim();
+  body.textContent = [transcript, interim && `${interim} ...`].filter(Boolean).join(" ") || "No transcript captured yet.";
+
+  wrap.append(label, body);
+  els.output.replaceChildren(wrap);
+}
+
+async function copyVoiceTranscript() {
+  const text = state.lastVoiceTranscript.trim();
+  if (!text) {
+    setStatus("Record a transcript before copying it.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Voice transcript copied.", "ok");
+  } catch (error) {
+    console.error("Voice transcript copy failed:", error);
+    setStatus("Copy failed. Your browser blocked clipboard access.", "error");
+  }
+}
+
+function sendVoiceTranscriptToChatAi() {
+  const text = state.lastVoiceTranscript.trim();
+  if (!text) {
+    setStatus("Record a transcript before sending it somewhere.", "error");
+    return;
+  }
+
+  selectTool("chat");
+  els.prompt.value = `Help me with this voice transcript:\n\n${text}`;
+  setStatus("Voice transcript sent to Chat AI.", "ok");
+}
+
+function sendVoiceTranscriptToPromptEnhancer() {
+  const text = state.lastVoiceTranscript.trim();
+  if (!text) {
+    setStatus("Record a transcript before sending it somewhere.", "error");
+    return;
+  }
+
+  selectTool("prompt");
+  els.prompt.value = text;
+  els.promptMode.value = "Story/Lore Prompt";
+  setStatus("Voice transcript sent to Prompt Enhancer.", "ok");
+}
+
+function downloadVoiceTranscript() {
+  const text = state.lastVoiceTranscript.trim();
+  if (!text) {
+    setStatus("Record a transcript before downloading it.", "error");
+    return;
+  }
+
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "uncensored-media-voice-transcript.txt";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus("Voice transcript downloaded.", "ok");
+}
+
 async function runPromptEnhancer(prompt, meta) {
   if (!prompt) {
     throw new Error("Paste a rough prompt first. The enhancer needs something to enhance.");
@@ -1940,7 +2220,6 @@ function placeholderSuggestion(id, prompt) {
   const clean = prompt || "your idea";
   const suggestions = {
     video: `Video brief staged for: ${clean}. Next provider should return storyboard beats and a render job id.`,
-    voice: "Voice job placeholder ready. Real provider should return an audio URL and transcript.",
     music: "Music brief placeholder ready. Real provider should return track URL, duration, and license notes.",
     social: "Social post placeholder ready. Real provider should return short post variants."
   };
@@ -1992,6 +2271,14 @@ function clearTool() {
     state.lastUpscalerOriginalName = "";
     setUpscalerOutputActions();
   }
+  if (activeTool().id === "voice") {
+    stopExistingSpeechRecognition();
+    state.lastVoiceTranscript = "";
+    state.voiceInterimTranscript = "";
+    els.liveVoiceTranscript.textContent = "Microphone transcript will appear here while you speak.";
+    setVoiceOutputActions();
+    setVoiceRecordingState();
+  }
   if (activeTool().id === "image") {
     state.lastEnhancedPrompt = "";
     els.useEnhancedPrompt.disabled = true;
@@ -2024,6 +2311,12 @@ function boot() {
   els.downloadBackgroundPng.addEventListener("click", downloadBackgroundPng);
   els.sendBackgroundToImage.addEventListener("click", sendBackgroundToImageGenerator);
   els.downloadUpscaledPng.addEventListener("click", downloadUpscaledPng);
+  els.startVoiceRecording.addEventListener("click", startVoiceRecording);
+  els.stopVoiceRecording.addEventListener("click", stopVoiceRecording);
+  els.copyVoiceTranscript.addEventListener("click", copyVoiceTranscript);
+  els.sendVoiceToChat.addEventListener("click", sendVoiceTranscriptToChatAi);
+  els.sendVoiceToPrompt.addEventListener("click", sendVoiceTranscriptToPromptEnhancer);
+  els.downloadVoiceTranscript.addEventListener("click", downloadVoiceTranscript);
   els.file.addEventListener("change", () => {
     els.fileList.textContent = fileSummary();
   });

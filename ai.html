@@ -378,6 +378,7 @@
     .prompt-controls,
     .lore-controls,
     .code-controls,
+    .voice-controls,
     .upscaler-controls {
       display: none;
       gap: 0.85rem;
@@ -391,6 +392,7 @@
     .prompt-controls.active,
     .lore-controls.active,
     .code-controls.active,
+    .voice-controls.active,
     .upscaler-controls.active {
       display: grid;
     }
@@ -399,6 +401,7 @@
     .prompt-controls-grid,
     .lore-controls-grid,
     .code-controls-grid,
+    .voice-controls-grid,
     .upscaler-controls-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
@@ -415,6 +418,7 @@
     .code-output-actions,
     .ocr-output-actions,
     .background-output-actions,
+    .voice-output-actions,
     .upscaler-output-actions {
       display: flex;
       flex-wrap: wrap;
@@ -426,6 +430,7 @@
     .code-output-actions,
     .ocr-output-actions,
     .background-output-actions,
+    .voice-output-actions,
     .upscaler-output-actions {
       display: none;
       margin-top: 0.85rem;
@@ -436,16 +441,19 @@
     .code-output-actions.active,
     .ocr-output-actions.active,
     .background-output-actions.active,
+    .voice-output-actions.active,
     .upscaler-output-actions.active {
       display: flex;
     }
 
     .image-tool-actions button,
+    .voice-controls button,
     .prompt-output-actions button,
     .lore-output-actions button,
     .code-output-actions button,
     .ocr-output-actions button,
     .background-output-actions button,
+    .voice-output-actions button,
     .upscaler-output-actions button {
       min-height: 2.7rem;
       border: 1px solid rgba(245, 239, 226, 0.16);
@@ -458,11 +466,13 @@
     }
 
     .image-tool-actions button:disabled,
+    .voice-controls button:disabled,
     .prompt-output-actions button:disabled,
     .lore-output-actions button:disabled,
     .code-output-actions button:disabled,
     .ocr-output-actions button:disabled,
     .background-output-actions button:disabled,
+    .voice-output-actions button:disabled,
     .upscaler-output-actions button:disabled {
       cursor: not-allowed;
       opacity: 0.48;
@@ -486,6 +496,7 @@
     .code-result,
     .ocr-result,
     .background-result,
+    .voice-result,
     .upscaler-result {
       display: grid;
       gap: 0.7rem;
@@ -541,6 +552,17 @@
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
       font-size: 0.9rem;
       line-height: 1.55;
+    }
+
+    .live-transcript {
+      min-height: 5rem;
+      border: 1px solid rgba(245, 239, 226, 0.14);
+      border-radius: var(--radius);
+      padding: 0.85rem 0.95rem;
+      background: rgba(0, 213, 255, 0.07);
+      color: rgba(245, 239, 226, 0.9);
+      line-height: 1.5;
+      white-space: pre-wrap;
     }
 
     .transparent-preview {
@@ -833,6 +855,7 @@
       .code-output-actions,
       .ocr-output-actions,
       .background-output-actions,
+      .voice-output-actions,
       .upscaler-output-actions,
       .actions {
         align-items: stretch;
@@ -847,7 +870,9 @@
       .code-output-actions button,
       .ocr-output-actions button,
       .background-output-actions button,
+      .voice-output-actions button,
       .upscaler-output-actions button,
+      .voice-controls button,
       .download-button,
       .file-label {
         width: 100%;
@@ -882,7 +907,7 @@
     <section class="lab-hero">
       <p class="eyebrow">Tool Bench</p>
       <h1>AI Lab</h1>
-      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR, background removal, and upscaling run locally in the browser. Video, voice, and music stay staged until their own providers are plugged in.</p>
+      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. OCR, background removal, upscaling, and voice transcription run locally in the browser. Video and music stay staged until their own providers are plugged in.</p>
     </section>
 
     <section class="lab-shell" aria-label="AI tools">
@@ -1037,6 +1062,14 @@
               </div>
             </div>
 
+            <div id="voiceControls" class="voice-controls">
+              <div class="voice-controls-grid">
+                <button id="startVoiceRecordingButton" type="button">Start Recording</button>
+                <button id="stopVoiceRecordingButton" type="button" disabled>Stop Recording</button>
+              </div>
+              <div id="liveVoiceTranscript" class="live-transcript" aria-live="polite">Microphone transcript will appear here while you speak.</div>
+            </div>
+
             <div id="upscalerControls" class="upscaler-controls">
               <div class="upscaler-controls-grid">
                 <label>
@@ -1106,6 +1139,13 @@
             <button id="downloadUpscaledPngButton" type="button" disabled>Download Upscaled PNG</button>
           </div>
 
+          <div id="voiceOutputActions" class="voice-output-actions">
+            <button id="copyVoiceTranscriptButton" type="button" disabled>Copy Transcript</button>
+            <button id="sendVoiceToChatButton" type="button" disabled>Send to Chat AI</button>
+            <button id="sendVoiceToPromptButton" type="button" disabled>Send to Prompt Enhancer</button>
+            <button id="downloadVoiceTranscriptButton" type="button" disabled>Download .txt</button>
+          </div>
+
           <section id="imageGallery" class="image-gallery" aria-label="Recent image generations">
             <div class="image-gallery-head">
               <h3>Recent Images</h3>
@@ -1121,6 +1161,6 @@
   <script src="js/authNav.js"></script>
   <script src="js/ai-widget.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="scripts/ai-lab.js?v=upscaler-live-20260517"></script>
+  <script type="module" src="scripts/ai-lab.js?v=voice-ai-live-20260517"></script>
 </body>
 </html>
