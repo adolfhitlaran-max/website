@@ -1,4 +1,5 @@
 const AI_CHAT_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-chat";
+const AI_IMAGE_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-image";
 
 const tools = [
   {
@@ -15,11 +16,11 @@ const tools = [
     id: "image",
     title: "Image Generator",
     icon: "IM",
-    description: "Draft image prompts and mock image generation jobs before a real image provider gets plugged in.",
+    description: "Generate real images through the ai-image Hugging Face backend.",
     prompt: "Describe the image...",
-    meta: "Style, size, mood",
+    meta: "Style and aspect ratio, like cinematic 16:9",
     action: "Generate Image",
-    upload: { accept: "image/*", multiple: false }
+    imageTool: true
   },
   {
     id: "video",
@@ -214,18 +215,18 @@ function selectTool(id) {
 
 function renderTool(tool) {
   const backendPowered = isBackendTool(tool);
-  els.kicker.textContent = backendPowered ? "Live Ollama Backend" : "Mock Tool";
+  els.kicker.textContent = tool.imageTool ? "Live Image Backend" : backendPowered ? "Live Ollama Backend" : "Mock Tool";
   els.title.textContent = tool.title;
   els.description.textContent = tool.description;
   els.prompt.placeholder = tool.prompt;
   els.meta.placeholder = tool.meta;
   els.button.textContent = tool.action;
   els.activeToolStat.textContent = tool.title;
-  els.backendStat.textContent = backendPowered ? "ai-chat / Ollama" : "mock";
+  els.backendStat.textContent = tool.imageTool ? "ai-image / Hugging Face" : backendPowered ? "ai-chat / Ollama" : "mock";
   els.output.textContent = outputIntro(tool);
   setStatus(
     backendPowered
-      ? `${tool.title} is connected to ai-chat and the configured Ollama backend.`
+      ? backendStatusMessage(tool)
       : "Provider not wired yet. This tool returns a clean mock response.",
     backendPowered ? "ok" : ""
   );
@@ -234,12 +235,21 @@ function renderTool(tool) {
 }
 
 function isBackendTool(tool) {
-  return Boolean(tool.live || tool.aiTool);
+  return Boolean(tool.live || tool.aiTool || tool.imageTool);
+}
+
+function backendStatusMessage(tool) {
+  if (tool.imageTool) return `${tool.title} is connected to the ai-image Hugging Face backend.`;
+  return `${tool.title} is connected to ai-chat and the configured Ollama backend.`;
 }
 
 function outputIntro(tool) {
   if (tool.id === "chat") {
     return renderChatHistory() || "Ask a question and the ai-chat function will answer here.";
+  }
+
+  if (tool.imageTool) {
+    return `${tool.title} output will show up here.`;
   }
 
   if (tool.aiTool) {
@@ -307,11 +317,22 @@ async function handleSubmit(event) {
 
   setLoading(true);
   setStatus(`${tool.title} is working...`);
-  els.output.textContent = "Thinking. Dramatically, of course.";
+  if (tool.imageTool) {
+    renderLoadingState("Generating image with Hugging Face...");
+  } else {
+    els.output.textContent = "Thinking. Dramatically, of course.";
+  }
 
   try {
     if (tool.id === "chat") {
       await runChat([prompt, meta && `Context: ${meta}`].filter(Boolean).join("\n\n"));
+      return;
+    }
+
+    if (tool.imageTool) {
+      const data = await runImageGenerator(prompt, meta);
+      renderImageResult(data);
+      setStatus(`${tool.title} finished through ai-image / Hugging Face.`, "ok");
       return;
     }
 
@@ -351,6 +372,98 @@ async function runChat(prompt) {
   state.chatMessages = [...state.chatMessages, { role: "assistant", content: reply }].slice(-8);
   els.output.textContent = renderChatHistory();
   setStatus(`Chat AI replied through ${data?.provider || "ai-chat"}${data?.model ? ` (${data.model})` : ""}.`, "ok");
+}
+
+async function runImageGenerator(prompt, meta) {
+  if (!prompt) {
+    throw new Error("Describe the image first. Blank canvas, blank results.");
+  }
+
+  const { style, aspectRatio } = parseImageMeta(meta);
+  const response = await fetch(AI_IMAGE_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      prompt,
+      style,
+      aspectRatio
+    })
+  });
+
+  const responseText = await response.text();
+  let data = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch (error) {
+    console.error("ai-image JSON parse failed:", { responseText, error });
+    throw new Error("ai-image returned invalid JSON.");
+  }
+
+  if (!response.ok || data?.ok === false) {
+    console.error("ai-image request failed:", {
+      status: response.status,
+      responseText,
+      data
+    });
+    throw new Error(data?.details || data?.error || `ai-image returned ${response.status}.`);
+  }
+
+  const imageUrl = String(data?.image_url || data?.imageUrl || "").trim();
+  if (!imageUrl) throw new Error("ai-image returned no image_url.");
+
+  return {
+    ...data,
+    image_url: imageUrl
+  };
+}
+
+function parseImageMeta(meta) {
+  const text = meta || "";
+  const match = text.match(/\b(1:1|16:9|9:16|4:3|3:4|square|landscape|portrait)\b/i);
+  const aspectRatio = match ? match[1] : "1:1";
+  const style = text.replace(match?.[0] || "", "").replace(/\s{2,}/g, " ").trim() || "dark modern cinematic";
+
+  return { style, aspectRatio };
+}
+
+function renderLoadingState(message) {
+  const wrap = document.createElement("div");
+  wrap.className = "loading-state";
+
+  const spinner = document.createElement("span");
+  spinner.className = "spinner";
+  spinner.setAttribute("aria-hidden", "true");
+
+  const text = document.createElement("span");
+  text.textContent = message;
+
+  wrap.append(spinner, text);
+  els.output.replaceChildren(wrap);
+}
+
+function renderImageResult(data) {
+  const wrap = document.createElement("div");
+  wrap.className = "image-result";
+
+  const image = document.createElement("img");
+  image.src = data.image_url;
+  image.alt = "Generated image";
+  image.loading = "lazy";
+
+  const meta = document.createElement("p");
+  meta.className = "image-result-meta";
+  meta.textContent = `Provider: ${data.provider || "huggingface"}${data.model ? ` (${data.model})` : ""}`;
+
+  const download = document.createElement("a");
+  download.className = "download-button";
+  download.href = data.image_url;
+  download.download = "uncensored-media-ai-image.png";
+  download.textContent = "Download Image";
+
+  wrap.append(image, meta, download);
+  els.output.replaceChildren(wrap);
 }
 
 async function runStructuredAiTool(tool, prompt, meta) {

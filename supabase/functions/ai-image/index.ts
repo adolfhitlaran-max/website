@@ -98,68 +98,10 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
-function svgDataUrl(svg: string) {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
-function demoImage(prompt: string, style: string, aspectRatio: string, reason: string) {
-  const safePrompt = escapeXml(prompt || "AI image preview");
-  const safeStyle = escapeXml(style || "Demo style");
-  const { width, height } = aspectDimensions(aspectRatio);
-  const fontSize = Math.max(24, Math.round(width / 26));
-  const subtitleSize = Math.max(16, Math.round(width / 46));
-  const svg = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-    "<defs>",
-    '<linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">',
-    '<stop offset="0%" stop-color="#06070a"/>',
-    '<stop offset="48%" stop-color="#191c23"/>',
-    '<stop offset="100%" stop-color="#3b0d13"/>',
-    "</linearGradient>",
-    '<linearGradient id="line" x1="0" x2="1">',
-    '<stop offset="0%" stop-color="#e5242a"/>',
-    '<stop offset="100%" stop-color="#00d5ff"/>',
-    "</linearGradient>",
-    "</defs>",
-    '<rect width="100%" height="100%" fill="url(#bg)"/>',
-    `<rect x="${width * 0.06}" y="${height * 0.08}" width="${width * 0.88}" height="${height * 0.84}" rx="18" fill="rgba(255,255,255,0.045)" stroke="rgba(245,239,226,0.22)"/>`,
-    `<rect x="${width * 0.1}" y="${height * 0.16}" width="${width * 0.8}" height="6" fill="url(#line)"/>`,
-    `<text x="${width * 0.1}" y="${height * 0.31}" fill="#f5efe2" font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="900">AI IMAGE DEMO</text>`,
-    `<text x="${width * 0.1}" y="${height * 0.43}" fill="#c9c4b8" font-family="Arial, sans-serif" font-size="${subtitleSize}">${safePrompt}</text>`,
-    `<text x="${width * 0.1}" y="${height * 0.53}" fill="#ffb83d" font-family="Arial, sans-serif" font-size="${subtitleSize}">${safeStyle}</text>`,
-    `<text x="${width * 0.1}" y="${height * 0.66}" fill="#8f969f" font-family="Arial, sans-serif" font-size="${Math.max(14, subtitleSize - 2)}">Fallback: ${escapeXml(reason)}</text>`,
-    "</svg>"
-  ].join("");
-
-  return {
-    ok: true,
-    provider: "demo",
-    demo: true,
-    prompt,
-    style,
-    aspectRatio,
-    width,
-    height,
-    mimeType: "image/svg+xml",
-    imageUrl: svgDataUrl(svg),
-    message: "Demo image returned because Hugging Face image generation is not available right now.",
-    details: reason
-  };
-}
-
-function escapeXml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 async function generateWithHuggingFace(prompt: string, style: string, aspectRatio: string) {
   const apiKey = Deno.env.get("HUGGINGFACE_API_KEY")?.trim();
   if (!apiKey) {
-    return demoImage(prompt, style, aspectRatio, "Missing HUGGINGFACE_API_KEY");
+    throw new Error("Missing HUGGINGFACE_API_KEY");
   }
 
   const model = Deno.env.get("HUGGINGFACE_IMAGE_MODEL")?.trim() || DEFAULT_MODEL;
@@ -195,13 +137,13 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
   if (!response.ok) {
     const details = decodeResponseText(responseBuffer) || `Hugging Face returned ${response.status} ${response.statusText}`;
     console.error("Hugging Face image request failed:", details);
-    return demoImage(prompt, style, aspectRatio, details);
+    throw new Error(details);
   }
 
   if (!contentType.startsWith("image/")) {
     const details = decodeResponseText(responseBuffer) || `Unexpected Hugging Face content type: ${contentType}`;
     console.error("Hugging Face image response was not an image:", details);
-    return demoImage(prompt, style, aspectRatio, details);
+    throw new Error(details);
   }
 
   const mimeType = contentType.split(";")[0] || "image/png";
@@ -210,7 +152,6 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
   return {
     ok: true,
     provider: "huggingface",
-    demo: false,
     model,
     prompt,
     style,
@@ -218,7 +159,7 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
     width: dimensions.width,
     height: dimensions.height,
     mimeType,
-    imageUrl: `data:${mimeType};base64,${base64}`
+    image_url: `data:${mimeType};base64,${base64}`
   };
 }
 
@@ -272,7 +213,11 @@ async function handleRequest(req: Request) {
     return jsonResponse(result);
   } catch (error) {
     console.error("AI image function provider error:", error);
-    return jsonResponse(demoImage(prompt, style, aspectRatio, errorDetails(error)));
+    return jsonResponse({
+      ok: false,
+      error: "Hugging Face image generation failed",
+      details: errorDetails(error)
+    }, 502);
   }
 }
 

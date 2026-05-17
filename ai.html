@@ -440,6 +440,65 @@
       color: rgba(245, 239, 226, 0.58);
     }
 
+    .loading-state {
+      min-height: 12rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.85rem;
+      color: rgba(245, 239, 226, 0.82);
+      font-weight: 850;
+    }
+
+    .spinner {
+      width: 1.6rem;
+      height: 1.6rem;
+      border: 3px solid rgba(245, 239, 226, 0.18);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .image-result {
+      display: grid;
+      gap: 0.85rem;
+    }
+
+    .image-result img {
+      width: min(100%, 56rem);
+      max-height: 70vh;
+      border: 1px solid rgba(245, 239, 226, 0.16);
+      border-radius: var(--radius);
+      object-fit: contain;
+      background: rgba(0, 0, 0, 0.32);
+    }
+
+    .image-result-meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 750;
+    }
+
+    .download-button {
+      width: fit-content;
+      min-height: 3rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(245, 239, 226, 0.16);
+      border-radius: 999px;
+      padding: 0.72rem 1rem;
+      background: rgba(245, 239, 226, 0.08);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 950;
+    }
+
     .quick-panel {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -550,7 +609,7 @@
     <section class="lab-hero">
       <p class="eyebrow">Tool Bench</p>
       <h1>AI Lab</h1>
-      <p>Chat, prompt enhancement, lore, code help, and social posts are live through the ai-chat backend. Image, video, OCR, voice, music, background removal, and upscaling stay staged until their own providers are plugged in.</p>
+      <p>Chat, image generation, prompt enhancement, lore, code help, and social posts are live through backend functions. Video, OCR, voice, music, background removal, and upscaling stay staged until their own providers are plugged in.</p>
     </section>
 
     <section class="lab-shell" aria-label="AI tools">
