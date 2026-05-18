@@ -528,6 +528,7 @@
 
     root.append(panel, toggle);
     document.body.appendChild(root);
+    document.body.classList.add("um-ai-widget-present");
 
     renderHistory();
     setOpen(wasOpen());

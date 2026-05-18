@@ -2,6 +2,7 @@
   const DEFAULT_LABEL = "Sign in";
   const FLOATING_LINK_ID = "umAuthFloatingLink";
   const DISPLAY_CACHE_KEY = "um.auth.displayName";
+  const NAV_OFFSET_VAR = "--um-auth-nav-offset";
   const SCRIPT_URL = document.currentScript?.src || new URL("./authNav.js", window.location.href).href;
   const AUTH_MODULE_URL = new URL("./supabaseClient.js", SCRIPT_URL).href;
 
@@ -95,19 +96,31 @@
       }
 
       .um-auth-has-site-nav #${FLOATING_LINK_ID} {
-        top: calc(max(0.65rem, env(safe-area-inset-top)) + 4.35rem);
+        top: calc(max(0.65rem, env(safe-area-inset-top)) + var(${NAV_OFFSET_VAR}, 4.35rem));
       }
 
       @media (max-width: 720px) {
         .um-auth-has-site-nav #${FLOATING_LINK_ID} {
-          top: calc(max(0.45rem, env(safe-area-inset-top)) + 5.8rem);
+          top: calc(max(0.45rem, env(safe-area-inset-top)) + var(${NAV_OFFSET_VAR}, 5.8rem));
         }
       }
     `;
 
     document.head.appendChild(style);
     document.body.appendChild(link);
+    updateFloatingOffset();
     return link;
+  }
+
+  function updateFloatingOffset() {
+    const topbar = document.querySelector(".topbar");
+    if (!topbar) {
+      document.documentElement.style.removeProperty(NAV_OFFSET_VAR);
+      return;
+    }
+
+    const height = Math.ceil(topbar.getBoundingClientRect().height);
+    document.documentElement.style.setProperty(NAV_OFFSET_VAR, `${height + 10}px`);
   }
 
   function setAuthLabel(link, label, signedIn = false) {
@@ -191,6 +204,19 @@
 
   ensureFloatingAuthLink();
   renderAuthNav();
+
+  window.addEventListener("resize", updateFloatingOffset);
+  window.addEventListener("orientationchange", () => {
+    window.setTimeout(updateFloatingOffset, 150);
+  });
+
+  if (window.ResizeObserver) {
+    const topbar = document.querySelector(".topbar");
+    if (topbar) {
+      const observer = new ResizeObserver(updateFloatingOffset);
+      observer.observe(topbar);
+    }
+  }
 
   window.addEventListener("um:profile-updated", (event) => {
     const profile = event.detail || null;

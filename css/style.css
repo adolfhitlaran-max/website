@@ -12,6 +12,11 @@
   pointer-events: none;
 }
 
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid rgba(0, 213, 255, 0.72);
+  outline-offset: 3px;
+}
+
 .um-ai-widget * {
   box-sizing: border-box;
 }
@@ -265,6 +270,10 @@
 }
 
 @media (max-width: 560px) {
+  body.um-ai-widget-present {
+    padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)) !important;
+  }
+
   .um-ai-widget {
     right: max(0.75rem, env(safe-area-inset-right));
     bottom: max(0.75rem, env(safe-area-inset-bottom));
@@ -290,5 +299,97 @@
 
   .um-ai-send {
     width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    min-height: auto !important;
+    display: grid !important;
+    align-items: stretch !important;
+    gap: 0.65rem !important;
+    padding: 0.72rem max(0.75rem, env(safe-area-inset-right)) 0.72rem max(0.75rem, env(safe-area-inset-left)) !important;
+  }
+
+  .brand {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .brand > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nav,
+  .topnav {
+    width: 100% !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    gap: 0.45rem !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    padding-bottom: 0.2rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav::-webkit-scrollbar,
+  .topnav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav a,
+  .topnav .button {
+    width: auto !important;
+    min-height: 2.55rem !important;
+    flex: 0 0 auto !important;
+    padding: 0.58rem 0.78rem !important;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  main,
+  .wrap,
+  .topbar-inner {
+    width: min(100% - 1rem, var(--max, 1180px)) !important;
+  }
+
+  .toolbar,
+  .button-row,
+  .composer-actions,
+  .viewer-actions,
+  .primary-links {
+    align-items: stretch !important;
+  }
+
+  .toolbar {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .toolbar label,
+  .toolbar button,
+  .button-row > *,
+  .composer-actions button,
+  .viewer-actions .button,
+  .primary-links .button {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
