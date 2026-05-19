@@ -1,4 +1,5 @@
 (function () {
+  const widgetScriptUrl = document.currentScript?.src || new URL("js/ai-widget.js", window.location.origin).href;
   const ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/chat";
   const HISTORY_KEY = "umArchivistAiHistory";
   const OPEN_KEY = "umArchivistAiOpen";
@@ -8,6 +9,7 @@
   const DEBUG = window.localStorage.getItem("umArchivistAiDebug") === "1";
   const FALLBACK_REPLY = "Archivist AI is having trouble reaching the archive right now. Give it a minute and try again.";
   const TIMEOUT_REPLY = "Archivist AI took too long to answer. Free robot brain is slow today.";
+  const AUTH_REPLY = "Sign in and unlock subscriber access before using Archivist AI. Yes, the gate is doing its job.";
   const VALID_NAV_PATHS = new Set([
     "/",
     "/pages/profile.html",
@@ -121,6 +123,34 @@
   let input;
   let sendButton;
   let pending = false;
+  let supabaseModulePromise = null;
+
+  async function getSupabaseClient() {
+    if (window.supabaseClient) return window.supabaseClient;
+
+    supabaseModulePromise ||= import(new URL("./supabaseClient.js", widgetScriptUrl).href);
+    const module = await supabaseModulePromise;
+    return window.supabaseClient || module.supabase;
+  }
+
+  async function aiJsonHeaders() {
+    const client = await getSupabaseClient();
+    const { data, error } = await client.auth.getSession();
+    if (error) {
+      console.error("Archivist AI session lookup failed:", error);
+      throw new Error("AI authentication failed.");
+    }
+
+    const token = data?.session?.access_token;
+    if (!token) {
+      throw new Error("AI authentication required.");
+    }
+
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    };
+  }
 
   function loadHistory() {
     try {
@@ -246,6 +276,11 @@
     );
   }
 
+  function isAuthError(error) {
+    const message = String(error?.message || "").toLowerCase();
+    return message.includes("authentication") || message.includes("access code") || message.includes("subscriber access");
+  }
+
   function validNavigatePath(path) {
     return typeof path === "string" && VALID_NAV_PATHS.has(path);
   }
@@ -327,9 +362,7 @@
     try {
       const response = await fetch(ENDPOINT, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: await aiJsonHeaders(),
         body: JSON.stringify({ messages: apiMessages }),
         signal: controller.signal
       });
@@ -455,10 +488,12 @@
     } catch (error) {
       if (isTimeoutError(error)) {
         if (DEBUG) console.error("Archivist AI request failed:", error);
+      } else if (isAuthError(error)) {
+        console.info("Archivist AI auth required:", error.message || error);
       } else {
         console.error("Archivist AI request failed:", error);
       }
-      const reply = isTimeoutError(error) ? TIMEOUT_REPLY : FALLBACK_REPLY;
+      const reply = isTimeoutError(error) ? TIMEOUT_REPLY : isAuthError(error) ? AUTH_REPLY : FALLBACK_REPLY;
       history = [...history, { role: "assistant", content: reply }].slice(-MAX_HISTORY);
     } finally {
       saveHistory();

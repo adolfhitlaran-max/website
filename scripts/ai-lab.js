@@ -3,6 +3,25 @@ import { getCurrentUserAndProfile, supabase } from "../js/supabaseClient.js";
 const AI_CHAT_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-chat";
 const AI_IMAGE_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-image";
 const AI_MUSIC_ENDPOINT = "https://dbkrtdzppymjxutivsmo.supabase.co/functions/v1/ai-music";
+const BACKGROUND_REMOVAL_MODULE_URL = "https://esm.sh/@imgly/background-removal@1.7.0?bundle&target=es2022";
+
+async function aiJsonHeaders() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    console.error("AI auth session lookup failed:", error);
+    throw new Error("Your AI session could not be verified. Sign in again.");
+  }
+
+  const token = data?.session?.access_token;
+  if (!token) {
+    throw new Error("Sign in and unlock subscriber access before using AI tools.");
+  }
+
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`
+  };
+}
 
 const tools = [
   {
@@ -903,9 +922,7 @@ async function generateImageFromRequest(request, options = {}) {
 async function runImage(request) {
   const response = await fetch(AI_IMAGE_ENDPOINT, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: await aiJsonHeaders(),
     body: JSON.stringify({
       prompt: request.prompt,
       style: request.style,
@@ -995,9 +1012,7 @@ async function generateMusicFromRequest(request) {
 async function runMusic(request) {
   const response = await fetch(AI_MUSIC_ENDPOINT, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: await aiJsonHeaders(),
     body: JSON.stringify({
       prompt: request.prompt,
       genre: request.genre,
@@ -1554,7 +1569,11 @@ async function runBackgroundRemoval() {
 }
 
 async function loadBackgroundRemovalModule() {
-  backgroundRemovalModulePromise ||= import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/index.mjs");
+  backgroundRemovalModulePromise ||= import(BACKGROUND_REMOVAL_MODULE_URL).catch((error) => {
+    backgroundRemovalModulePromise = null;
+    console.error("Background removal module load failed:", error);
+    throw new Error(`Background remover runtime failed to load: ${error.message || error}`);
+  });
   return backgroundRemovalModulePromise;
 }
 
@@ -2710,9 +2729,7 @@ function buildStructuredMessages(systemPrompt, prompt, meta, uploads) {
 async function callAiChat(payload) {
   const response = await fetch(AI_CHAT_ENDPOINT, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: await aiJsonHeaders(),
     body: JSON.stringify(payload)
   });
 

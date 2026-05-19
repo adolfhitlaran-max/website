@@ -1,36 +1,8 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { generateAiText, messagesToPrompt, type ChatMessage } from "../_shared/ai-provider.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
-};
-
-const jsonHeaders = {
-  ...corsHeaders,
-  "Content-Type": "application/json"
-};
+import { errorDetails, jsonResponse, publicErrorDetails, rateLimit, requireMemberAccess } from "../_shared/security.ts";
 
 const AI_PROVIDER_TIMEOUT_MS = 20000;
-
-function jsonResponse(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: jsonHeaders
-  });
-}
-
-function errorDetails(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-
-  try {
-    return JSON.stringify(error);
-  } catch (_jsonError) {
-    return "Unknown error";
-  }
-}
 
 function sanitizeMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
@@ -51,23 +23,32 @@ function sanitizeMessages(value: unknown): ChatMessage[] {
 
 async function handleRequest(req: Request) {
   if (req.method === "OPTIONS") {
-    return jsonResponse({ ok: true });
+    return jsonResponse(req, { ok: true });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Method not allowed",
       details: "Use POST for AI chat requests."
     }, 405);
   }
 
+  const memberAccess = await requireMemberAccess(req);
+  if (memberAccess instanceof Response) return memberAccess;
+  const rateLimitResponse = rateLimit(req, String(memberAccess.user.id || "unknown"), {
+    label: "ai-chat",
+    limit: 30,
+    windowMs: 60_000
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   let body: { prompt?: unknown; messages?: unknown };
   try {
     body = await req.json();
   } catch (error) {
     console.error("AI chat invalid JSON body:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Invalid JSON body",
       details: errorDetails(error)
@@ -83,7 +64,7 @@ async function handleRequest(req: Request) {
   const userPrompt = prompt || messagesToPrompt(aiMessages);
 
   if (!aiMessages.length || !userPrompt) {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "No prompt or messages provided",
       details: "Send { \"prompt\": \"...\" } or { \"messages\": [{ \"role\": \"user\", \"content\": \"...\" }] }."
@@ -99,13 +80,13 @@ async function handleRequest(req: Request) {
       temperature: 0.4
     });
 
-    return jsonResponse(result);
+    return jsonResponse(req, result);
   } catch (error) {
     console.error("AI chat provider error:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "AI provider request failed",
-      details: errorDetails(error)
+      details: publicErrorDetails(error)
     }, 500);
   }
 }
@@ -115,10 +96,10 @@ Deno.serve(async (req) => {
     return await handleRequest(req);
   } catch (error) {
     console.error("AI chat unhandled function error:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "AI chat function failed",
-      details: errorDetails(error)
+      details: publicErrorDetails(error)
     }, 500);
   }
 });

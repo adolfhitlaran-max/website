@@ -1,16 +1,6 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { generateAiText, messagesToPrompt, type ChatMessage } from "../_shared/ai-provider.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
-};
-
-const jsonHeaders = {
-  ...corsHeaders,
-  "Content-Type": "application/json"
-};
+import { errorDetails, jsonResponse, publicErrorDetails, rateLimit, requireMemberAccess } from "../_shared/security.ts";
 
 const AI_PROVIDER_TIMEOUT_MS = 12000;
 const API_MESSAGE_LIMIT = 4;
@@ -26,26 +16,8 @@ const VALID_PAGES = [
   { name: "Audio Archive / Speeches", path: "/pages/archive.html", keywords: ["speeches", "speech", "audio", "archive", "old speeches", "historical speeches"] }
 ];
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: jsonHeaders
-  });
-}
-
-function errorDetails(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-
-  try {
-    return JSON.stringify(error);
-  } catch (_jsonError) {
-    return "Unknown error";
-  }
-}
-
-function aiProviderError(details: string, status = 500) {
-  return jsonResponse({
+function aiProviderError(req: Request, details: string, status = 500) {
+  return jsonResponse(req, {
     error: "AI provider request failed",
     details
   }, status);
@@ -104,22 +76,31 @@ function sanitizeMessages(value: unknown): ChatMessage[] {
 
 async function handleRequest(req: Request) {
   if (req.method === "OPTIONS") {
-    return jsonResponse({ ok: true });
+    return jsonResponse(req, { ok: true });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: "Method not allowed",
       details: "Use POST for Archivist AI chat requests."
     }, 405);
   }
+
+  const memberAccess = await requireMemberAccess(req);
+  if (memberAccess instanceof Response) return memberAccess;
+  const rateLimitResponse = rateLimit(req, String(memberAccess.user.id || "unknown"), {
+    label: "archivist-chat",
+    limit: 30,
+    windowMs: 60_000
+  });
+  if (rateLimitResponse) return rateLimitResponse;
 
   let body: { messages?: unknown };
   try {
     body = await req.json();
   } catch (error) {
     console.error("Archivist AI invalid JSON body:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       error: "Invalid JSON body",
       details: errorDetails(error)
     }, 400);
@@ -128,7 +109,7 @@ async function handleRequest(req: Request) {
   const messages = sanitizeMessages(body.messages).slice(-API_MESSAGE_LIMIT);
   if (!messages.length) {
     console.error("Archivist AI request missing messages:", body);
-    return jsonResponse({
+    return jsonResponse(req, {
       error: "No messages provided",
       details: "Send a JSON body shaped like { \"messages\": [{ \"role\": \"user\", \"content\": \"...\" }] }."
     }, 400);
@@ -137,14 +118,14 @@ async function handleRequest(req: Request) {
   const userRequest = lastUserMessage(messages);
   const requestedPage = pageForMessage(userRequest);
   if (requestedPage && (hasNavigationIntent(userRequest) || requestedPage.path === "/pages/archive.html")) {
-    return jsonResponse({
+    return jsonResponse(req, {
       reply: routeReply(requestedPage),
       navigateTo: requestedPage.path
     });
   }
 
   if (requestedPage && hasLocationIntent(userRequest)) {
-    return jsonResponse({
+    return jsonResponse(req, {
       reply: `${requestedPage.name} is at ${requestedPage.path}. The button is not hiding, detective.`
     });
   }
@@ -189,14 +170,14 @@ async function handleRequest(req: Request) {
       fallbackReply: FALLBACK_REPLY
     });
 
-    return jsonResponse({
+    return jsonResponse(req, {
       reply: aiResult.text,
       provider: aiResult.provider,
       model: aiResult.model
     });
   } catch (error) {
     console.error("Archivist AI provider error:", error);
-    return aiProviderError(errorDetails(error));
+    return aiProviderError(req, publicErrorDetails(error));
   }
 }
 
@@ -205,9 +186,9 @@ Deno.serve(async (req) => {
     return await handleRequest(req);
   } catch (error) {
     console.error("Archivist AI unhandled function error:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       error: "Archivist AI function failed",
-      details: errorDetails(error)
+      details: publicErrorDetails(error)
     }, 500);
   }
 });

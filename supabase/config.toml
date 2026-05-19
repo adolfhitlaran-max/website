@@ -1,7 +1,8 @@
 
 [functions.chat]
 enabled = true
-verify_jwt = false
+# Security: AI endpoints require a Supabase user JWT, then the function checks profiles.access_granted.
+verify_jwt = true
 import_map = "./functions/chat/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -12,18 +13,21 @@ entrypoint = "./functions/chat/index.ts"
 
 [functions.ai-chat]
 enabled = true
-verify_jwt = false
+# Security: keep private AI behind the Edge Function; never expose Ollama/provider URLs to browser JS.
+verify_jwt = true
 import_map = "./functions/ai-chat/deno.json"
 entrypoint = "./functions/ai-chat/index.ts"
 
 [functions.ai-image]
 enabled = true
-verify_jwt = false
+# Security: Hugging Face tokens stay in Supabase secrets/env only.
+verify_jwt = true
 import_map = "./functions/ai-image/deno.json"
 entrypoint = "./functions/ai-image/index.ts"
 
 [functions.ai-music]
 enabled = true
-verify_jwt = false
+# Security: local MusicGen URLs must be HTTPS tunnel/proxy URLs, not direct LAN/home IPs.
+verify_jwt = true
 import_map = "./functions/ai-music/deno.json"
 entrypoint = "./functions/ai-music/index.ts"

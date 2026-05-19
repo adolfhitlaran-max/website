@@ -42,28 +42,19 @@
 
     a { color: inherit; text-decoration: none; }
 
-    .shell {
-      width: min(var(--max), calc(100% - 2rem));
-      min-height: 100svh;
-      display: grid;
-      grid-template-columns: 16rem minmax(0, 1fr);
-      gap: 1rem;
-      margin: 0 auto;
-      padding: 1rem 0;
-    }
-
-    .sidebar {
+    .topbar {
       position: sticky;
-      top: 1rem;
-      height: calc(100svh - 2rem);
-      display: grid;
-      align-content: space-between;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 1rem;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      padding: 3.45rem 1rem 1rem;
-      background: var(--panel-strong);
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+      min-height: 4.5rem;
+      border-bottom: 1px solid var(--line);
+      padding: 0 max(1rem, calc((100vw - var(--max)) / 2));
+      background: rgba(5, 6, 7, 0.84);
+      backdrop-filter: blur(16px);
     }
 
     .brand {
@@ -88,12 +79,38 @@
       font-weight: 950;
     }
 
-    .side-nav {
-      display: grid;
-      gap: 0.45rem;
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 0.35rem;
     }
 
-    .side-nav a,
+    .nav a {
+      border: 1px solid transparent;
+      border-radius: 999px;
+      padding: 0.5rem 0.78rem;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 850;
+    }
+
+    .nav a:hover,
+    .nav a.active {
+      border-color: var(--line);
+      background: rgba(245, 239, 226, 0.08);
+      color: white;
+    }
+
+    .shell {
+      width: min(var(--max), calc(100% - 2rem));
+      display: grid;
+      gap: 1rem;
+      margin: 0 auto;
+      padding: 2rem 0 3rem;
+      min-width: 0;
+    }
+
     .button {
       min-height: 2.85rem;
       display: inline-flex;
@@ -108,29 +125,10 @@
       text-align: center;
     }
 
-    .side-nav a {
-      justify-content: flex-start;
-      border-radius: var(--radius);
-      color: rgba(245, 239, 226, 0.78);
-    }
-
-    .side-nav a.active,
-    .side-nav a:hover,
     .button:hover {
       border-color: rgba(0, 213, 255, 0.46);
       background: rgba(0, 213, 255, 0.08);
       color: white;
-    }
-
-    .sidebar-note {
-      color: var(--muted);
-      font-size: 0.86rem;
-    }
-
-    main {
-      display: grid;
-      gap: 1rem;
-      min-width: 0;
     }
 
     .hero,
@@ -323,29 +321,15 @@
     }
 
     @media (max-width: 940px) {
-      .shell,
       .content-grid {
         grid-template-columns: 1fr;
-      }
-
-      .sidebar {
-        position: static;
-        height: auto;
-      }
-
-      .side-nav {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
     }
 
     @media (max-width: 620px) {
       .shell {
         width: min(var(--max), calc(100% - 1rem));
-        padding: 0.5rem 0;
-      }
-
-      .side-nav {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        padding: 1rem 0 3rem;
       }
 
       .stream-head {
@@ -364,30 +348,25 @@
   </style>
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar" aria-label="Live page navigation">
-      <div>
-        <a class="brand" href="../index.html">
-          <span class="brand-mark">UM</span>
-          <span>Uncensored Media</span>
-        </a>
-        <nav class="side-nav" aria-label="Primary">
-          <a href="../index.html">Home</a>
-          <a href="../Divided%20by%20Year/">Speeches</a>
-          <a href="./pdfs.html">PDFs</a>
-          <a href="./forum.html">Forum</a>
-          <a href="../games/">Games</a>
-          <a href="../ai.html">AI Lab</a>
-          <a href="./profile.html">Profile</a>
-          <a href="./chat.html?room=stream">Chat</a>
-          <a href="./login.html" data-auth-link>Login</a>
-          <a class="active" href="./live.html">Live</a>
-        </nav>
-      </div>
-      <p class="sidebar-note">Live streams, marathons, discussions, and community programming from the Uncensored Media archive.</p>
-    </aside>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <span class="brand-mark">UM</span>
+      <span>Uncensored Media</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="../Divided%20by%20Year/">Speeches</a>
+      <a href="./pdfs.html">PDFs</a>
+      <a href="./forum.html">Forum</a>
+      <a class="active" href="./live.html">Live</a>
+      <a href="./chat.html">Chat</a>
+      <a href="../ai.html">AI Lab</a>
+      <a href="../games/">Games</a>
+      <a href="./profile.html">Profile</a>
+      <a href="./login.html" data-auth-link>Login</a>
+    </nav>
+  </header>
 
-    <main>
+  <main class="shell">
       <section class="hero" aria-labelledby="liveTitle">
         <p class="eyebrow">Broadcast Room</p>
         <h1 id="liveTitle">Live</h1>
@@ -434,8 +413,7 @@
           <div id="announcementList" class="list" aria-live="polite"></div>
         </article>
       </section>
-    </main>
-  </div>
+  </main>
 
   <script src="../js/live.js"></script>
   <script src="../js/authNav.js"></script>

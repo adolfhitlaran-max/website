@@ -1,15 +1,5 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
-};
-
-const jsonHeaders = {
-  ...corsHeaders,
-  "Content-Type": "application/json"
-};
+import { errorDetails, jsonResponse, publicErrorDetails, rateLimit, requireMemberAccess } from "../_shared/security.ts";
 
 const MUSIC_TIMEOUT_MS = 120000;
 
@@ -25,24 +15,6 @@ type ProviderFailure = {
   provider: string;
   error: string;
 };
-
-function jsonResponse(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: jsonHeaders
-  });
-}
-
-function errorDetails(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-
-  try {
-    return JSON.stringify(error);
-  } catch (_jsonError) {
-    return "Unknown error";
-  }
-}
 
 function cleanText(value: unknown, fallback = "") {
   return String(value || fallback).trim().slice(0, 2000);
@@ -63,6 +35,42 @@ function cleanBpm(value: unknown) {
 
 function joinUrl(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+function assertSafeProviderUrl(rawUrl: string, name: string) {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch (_error) {
+    throw new Error(`${name} must be a valid URL.`);
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`${name} must use an HTTPS tunnel or reverse proxy, not a direct local/LAN URL.`);
+  }
+
+  if (isPrivateOrLocalHost(url.hostname)) {
+    throw new Error(`${name} must not point directly at localhost, LAN IPs, or private network hosts.`);
+  }
+}
+
+function isPrivateOrLocalHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".local")) return true;
+
+  const parts = host.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
 }
 
 function buildProviderPayload(body: MusicRequestBody) {
@@ -94,11 +102,17 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-async function postJson(url: string, payload: Record<string, unknown>, providerName: string) {
+async function postJson(
+  url: string,
+  payload: Record<string, unknown>,
+  providerName: string,
+  extraHeaders: Record<string, string> = {}
+) {
   const response = await withTimeout(fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...extraHeaders
     },
     body: JSON.stringify(payload)
   }), MUSIC_TIMEOUT_MS, `${providerName} request timed out.`);
@@ -136,8 +150,11 @@ async function generateWithMusicGenLocal(payload: ReturnType<typeof buildProvide
   if (!musicgenUrl) {
     throw new Error("MUSICGEN_URL is not configured.");
   }
+  assertSafeProviderUrl(musicgenUrl, "MUSICGEN_URL");
+  const proxyToken = Deno.env.get("MUSICGEN_PROXY_TOKEN")?.trim();
+  const headers = proxyToken ? { "X-UM-Proxy-Token": proxyToken } : {};
 
-  const data = await postJson(joinUrl(musicgenUrl, "/generate"), payload, "musicgen-local");
+  const data = await postJson(joinUrl(musicgenUrl, "/generate"), payload, "musicgen-local", headers);
 
   return {
     ok: true,
@@ -154,6 +171,7 @@ async function generateWithHuggingFaceEndpoint(payload: ReturnType<typeof buildP
   if (!endpoint) {
     throw new Error("HF_MUSIC_ENDPOINT is not configured.");
   }
+  assertSafeProviderUrl(endpoint, "HF_MUSIC_ENDPOINT");
 
   const data = await postJson(endpoint, payload, "huggingface-music-endpoint");
 
@@ -169,23 +187,32 @@ async function generateWithHuggingFaceEndpoint(payload: ReturnType<typeof buildP
 
 async function handleRequest(req: Request) {
   if (req.method === "OPTIONS") {
-    return jsonResponse({ ok: true });
+    return jsonResponse(req, { ok: true });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Method not allowed",
       details: "Use POST for AI music requests."
     }, 405);
   }
 
+  const memberAccess = await requireMemberAccess(req);
+  if (memberAccess instanceof Response) return memberAccess;
+  const rateLimitResponse = rateLimit(req, String(memberAccess.user.id || "unknown"), {
+    label: "ai-music",
+    limit: 2,
+    windowMs: 10 * 60_000
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   let body: MusicRequestBody;
   try {
     body = await req.json();
   } catch (error) {
     console.error("AI music invalid JSON body:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Invalid JSON body",
       details: errorDetails(error)
@@ -194,7 +221,7 @@ async function handleRequest(req: Request) {
 
   const payload = buildProviderPayload(body);
   if (!payload.prompt) {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Missing prompt",
       details: "Send { \"prompt\": \"...\", \"genre\": \"Fantasy\", \"duration\": 10, \"bpm\": 120, \"mood\": \"heroic\" }."
@@ -204,7 +231,7 @@ async function handleRequest(req: Request) {
   const hasMusicGen = Boolean(Deno.env.get("MUSICGEN_URL")?.trim());
   const hasHfEndpoint = Boolean(Deno.env.get("HF_MUSIC_ENDPOINT")?.trim());
   if (!hasMusicGen && !hasHfEndpoint) {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Music generator provider is not configured."
     }, 500);
@@ -214,23 +241,23 @@ async function handleRequest(req: Request) {
 
   if (hasMusicGen) {
     try {
-      return jsonResponse(await generateWithMusicGenLocal(payload));
+      return jsonResponse(req, await generateWithMusicGenLocal(payload));
     } catch (error) {
       console.error("MusicGen local provider failed:", error);
-      failures.push({ provider: "musicgen-local", error: errorDetails(error) });
+      failures.push({ provider: "musicgen-local", error: publicErrorDetails(error) });
     }
   }
 
   if (hasHfEndpoint) {
     try {
-      return jsonResponse(await generateWithHuggingFaceEndpoint(payload));
+      return jsonResponse(req, await generateWithHuggingFaceEndpoint(payload));
     } catch (error) {
       console.error("Hugging Face music endpoint failed:", error);
-      failures.push({ provider: "huggingface-endpoint", error: errorDetails(error) });
+      failures.push({ provider: "huggingface-endpoint", error: publicErrorDetails(error) });
     }
   }
 
-  return jsonResponse({
+  return jsonResponse(req, {
     ok: false,
     error: "Music generation failed.",
     details: failures.map((failure) => `${failure.provider}: ${failure.error}`).join(" | "),
@@ -243,10 +270,10 @@ Deno.serve(async (req) => {
     return await handleRequest(req);
   } catch (error) {
     console.error("AI music unhandled function error:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "AI music function failed",
-      details: errorDetails(error)
+      details: publicErrorDetails(error)
     }, 500);
   }
 });

@@ -33,7 +33,15 @@ On an Intel/Rosetta Mac, Torch may install as `2.2.2`. If that happens, keep `tr
 ## Run
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 7860
+uvicorn app:app --host 127.0.0.1 --port 7860
+```
+
+Keep this bound to `127.0.0.1`. Do not port-forward this service or bind it to `0.0.0.0` on a home network.
+
+For tunnel/proxy use, set a shared token on the local service:
+
+```bash
+export MUSICGEN_PROXY_TOKEN="use-a-long-random-value"
 ```
 
 Health check:
@@ -52,13 +60,16 @@ curl http://127.0.0.1:7860/generate \
 
 ## Cloudflare Tunnel
 
-Expose the local server through Cloudflare Tunnel, then set the Supabase secret:
+Expose the local server through an outbound Cloudflare Tunnel, then set the Supabase secret:
 
 ```bash
 cloudflared tunnel --url http://localhost:7860
 supabase secrets set MUSICGEN_URL=https://YOUR-TUNNEL.trycloudflare.com
+supabase secrets set MUSICGEN_PROXY_TOKEN=use-a-long-random-value
 supabase functions deploy ai-music
 ```
+
+The public URL should be the tunnel/proxy URL only. Do not set `MUSICGEN_URL` to a LAN IP, home public IP, or raw local port. Add Cloudflare Access or another reverse-proxy auth/rate-limit layer before opening this to real users.
 
 `ai-music` calls:
 

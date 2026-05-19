@@ -1,16 +1,6 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { InferenceClient } from "@huggingface/inference";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
-};
-
-const jsonHeaders = {
-  ...corsHeaders,
-  "Content-Type": "application/json"
-};
+import { errorDetails, jsonResponse, publicErrorDetails, rateLimit, requireMemberAccess } from "../_shared/security.ts";
 
 const FALLBACK_MODELS = [
   "black-forest-labs/FLUX.1-schnell",
@@ -51,24 +41,6 @@ const STYLE_MODIFIERS: Record<string, string> = {
   "concept art": "professional concept art, production design, clear silhouettes, mood painting",
   "logo/icon": "clean logo icon, simple memorable silhouette, scalable vector-like design, centered composition"
 };
-
-function jsonResponse(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: jsonHeaders
-  });
-}
-
-function errorDetails(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-
-  try {
-    return JSON.stringify(error);
-  } catch (_jsonError) {
-    return "Unknown error";
-  }
-}
 
 function cleanText(value: unknown, fallback = "") {
   return String(value || fallback).trim().slice(0, 2000);
@@ -163,7 +135,7 @@ async function generateWithHuggingFace(prompt: string, style: string, aspectRati
         image_url: `data:${mimeType};base64,${base64}`
       };
     } catch (error) {
-      const details = errorDetails(error);
+      const details = publicErrorDetails(error);
       failures.push({ model, error: details });
       console.error(`Hugging Face image model failed (${model}):`, error);
     }
@@ -225,23 +197,32 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 async function handleRequest(req: Request) {
   if (req.method === "OPTIONS") {
-    return jsonResponse({ ok: true });
+    return jsonResponse(req, { ok: true });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Method not allowed",
       details: "Use POST for AI image requests."
     }, 405);
   }
 
+  const memberAccess = await requireMemberAccess(req);
+  if (memberAccess instanceof Response) return memberAccess;
+  const rateLimitResponse = rateLimit(req, String(memberAccess.user.id || "unknown"), {
+    label: "ai-image",
+    limit: 8,
+    windowMs: 10 * 60_000
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   let body: ImageRequestBody;
   try {
     body = await req.json();
   } catch (error) {
     console.error("AI image invalid JSON body:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Invalid JSON body",
       details: errorDetails(error)
@@ -254,7 +235,7 @@ async function handleRequest(req: Request) {
   const negativePrompt = cleanText(body.negativePrompt);
 
   if (!prompt) {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "Missing prompt",
       details: "Send { \"prompt\": \"...\", \"style\": \"...\", \"aspectRatio\": \"1:1\" }."
@@ -263,17 +244,17 @@ async function handleRequest(req: Request) {
 
   try {
     const result = await generateWithHuggingFace(prompt, style, aspectRatio, negativePrompt);
-    return jsonResponse(result);
+    return jsonResponse(req, result);
   } catch (error) {
     console.error("AI image function provider error:", error);
     const failures = (error as ImageGenerationError)?.failures;
     const body: Record<string, unknown> = {
       ok: false,
       error: "Hugging Face image generation failed",
-      details: errorDetails(error)
+      details: publicErrorDetails(error)
     };
     if (failures?.length) body.failures = failures;
-    return jsonResponse(body, 502);
+    return jsonResponse(req, body, 502);
   }
 }
 
@@ -282,10 +263,10 @@ Deno.serve(async (req) => {
     return await handleRequest(req);
   } catch (error) {
     console.error("AI image unhandled function error:", error);
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: false,
       error: "AI image function failed",
-      details: errorDetails(error)
+      details: publicErrorDetails(error)
     }, 500);
   }
 });

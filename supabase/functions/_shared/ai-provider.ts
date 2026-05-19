@@ -27,6 +27,8 @@ const DEFAULT_OLLAMA_MODEL = "llama3.2:3b";
 const DEFAULT_TIMEOUT_MS = 12000;
 const DEFAULT_FALLBACK_REPLY = "I had a thought and immediately lost it. Try again, genius.";
 
+// Security: LOCAL_OLLAMA_URL is a server-side Supabase secret only.
+// It must point at an HTTPS tunnel/reverse proxy, never a browser-visible local/LAN/home IP URL.
 export function providerFromEnvironment(): AiProvider {
   return Deno.env.get("LOCAL_OLLAMA_URL")?.trim() ? "ollama" : "openrouter";
 }
@@ -55,6 +57,7 @@ async function generateWithOllama(options: GenerateAiTextOptions): Promise<AiPro
   if (!baseUrl) {
     throw new Error("LOCAL_OLLAMA_URL is not configured.");
   }
+  assertSafeProviderUrl(baseUrl, "LOCAL_OLLAMA_URL");
 
   const model = ollamaModelFromEnvironment();
   const prompt = (options.prompt || messagesToPrompt(options.messages)).trim();
@@ -97,6 +100,42 @@ async function generateWithOllama(options: GenerateAiTextOptions): Promise<AiPro
     model,
     text
   };
+}
+
+function assertSafeProviderUrl(rawUrl: string, name: string) {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch (_error) {
+    throw new Error(`${name} must be a valid URL.`);
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`${name} must use an HTTPS tunnel or reverse proxy, not a direct local/LAN URL.`);
+  }
+
+  if (isPrivateOrLocalHost(url.hostname)) {
+    throw new Error(`${name} must not point directly at localhost, LAN IPs, or private network hosts.`);
+  }
+}
+
+function isPrivateOrLocalHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".local")) return true;
+
+  const parts = host.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
 }
 
 async function generateWithOpenRouter(options: GenerateAiTextOptions): Promise<AiProviderResult> {

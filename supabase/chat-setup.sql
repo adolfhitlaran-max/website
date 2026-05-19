@@ -12,7 +12,8 @@ create table if not exists public.chat_messages (
 alter table public.chat_messages enable row level security;
 alter table public.chat_messages replica identity full;
 
-grant select on public.chat_messages to anon, authenticated;
+revoke all on public.chat_messages from anon;
+grant select on public.chat_messages to authenticated;
 grant insert on public.chat_messages to authenticated;
 grant usage, select on sequence public.chat_messages_id_seq to authenticated;
 
@@ -24,9 +25,10 @@ drop policy if exists "Logged in users can send chat messages" on public.chat_me
 drop policy if exists "Signed in users can read chat messages" on public.chat_messages;
 drop policy if exists "Profile users can send chat messages" on public.chat_messages;
 
-create policy "Anyone can read chat messages"
+create policy "Signed in users can read chat messages"
 on public.chat_messages
 for select
+to authenticated
 using (true);
 
 create policy "Logged in users can send chat messages"

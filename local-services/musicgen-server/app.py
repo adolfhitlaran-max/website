@@ -6,7 +6,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from scipy.io import wavfile
@@ -15,15 +15,17 @@ from transformers import AutoProcessor, MusicgenForConditionalGeneration
 
 MODEL_NAME = os.getenv("MUSICGEN_MODEL", "facebook/musicgen-small")
 TOKENS_PER_SECOND = int(os.getenv("MUSICGEN_TOKENS_PER_SECOND", "50"))
+ALLOWED_ORIGIN = os.getenv("MUSICGEN_ALLOWED_ORIGIN", "https://uncensoredmedia.io")
+PROXY_TOKEN = os.getenv("MUSICGEN_PROXY_TOKEN", "").strip()
 
 app = FastAPI(title="Uncensored Media MusicGen Server")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[ALLOWED_ORIGIN],
     allow_credentials=False,
     allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["content-type", "x-um-proxy-token"],
 )
 
 
@@ -45,6 +47,15 @@ def build_prompt(request: MusicRequest) -> str:
         "high quality instrumental music loop, clean mix, no vocals",
     ]
     return ". ".join(str(part) for part in parts if part)
+
+
+def require_proxy_token(request: Request) -> None:
+    if not PROXY_TOKEN:
+        return
+
+    supplied_token = request.headers.get("x-um-proxy-token", "").strip()
+    if supplied_token != PROXY_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 @lru_cache(maxsize=1)
@@ -92,17 +103,18 @@ def health():
 
 
 @app.post("/generate")
-def generate_music(request: MusicRequest):
+def generate_music(request_body: MusicRequest, request: Request):
+    require_proxy_token(request)
     try:
         processor, model, device = load_model()
-        prompt = build_prompt(request)
+        prompt = build_prompt(request_body)
         inputs = processor(
             text=[prompt],
             padding=True,
             return_tensors="pt",
         ).to(device)
 
-        max_new_tokens = max(1, int(request.duration * TOKENS_PER_SECOND))
+        max_new_tokens = max(1, int(request_body.duration * TOKENS_PER_SECOND))
         with torch.inference_mode():
             audio_values = model.generate(
                 **inputs,
@@ -113,7 +125,7 @@ def generate_music(request: MusicRequest):
 
         sample_rate = int(model.config.audio_encoder.sampling_rate)
         audio = audio_values[0, 0].detach().cpu().numpy()
-        target_samples = sample_rate * request.duration
+        target_samples = sample_rate * request_body.duration
         audio = audio[:target_samples]
         audio_int16 = normalize_audio(audio)
 
@@ -123,10 +135,11 @@ def generate_music(request: MusicRequest):
             "model": MODEL_NAME,
             "audio_url": wav_data_url(audio_int16, sample_rate),
             "prompt": prompt,
-            "duration": request.duration,
+            "duration": request_body.duration,
         }
     except Exception as error:
+        print(f"MusicGen generation failed: {error}")
         raise HTTPException(
             status_code=500,
-            detail=f"MusicGen generation failed: {error}",
+            detail="MusicGen generation failed.",
         ) from error
